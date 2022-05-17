@@ -241,6 +241,7 @@ action:
                   scene_id: "{{ scene_name }}"
                   snapshot_entities: >-
                     {{ synced_lights if synced_lights_on|count != 0 else [ invalid_light ] }}
+                    
 
         - alias: >-
             Listen for motion change, and wait for it to become 'OFF',
