@@ -1,0 +1,10 @@
+# blueprint:
+#   name: "Loop and do sequence"
+#   input:
+#     from:
+#       selector:
+#         number:
+#     sequence:
+#       selector:
+#         object:
+#   sequence:

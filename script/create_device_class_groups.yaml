@@ -1,0 +1,56 @@
+blueprint:
+  name: Create device class groups by room and class itself
+  description: >-
+    A script that sends an actionable notification with a confirmation before
+    running the specified action.
+  domain: script
+  input: 
+    areas:
+      selector:
+        object:
+      default: []
+    device_classes:
+      selector:
+        object:
+      default: []
+
+mode: restart
+
+sequence:
+  - variables:
+      areas: !input areas
+      device_classes: !input device_classes
+      num_areas: >-
+        {{ areas|length if areas is not string and areas is iterable else 0 }}
+      num_device_classes: >-
+        {{ device_classes|length if areas is not string and device_classes is iterable else 0 }}
+  - repeat:
+      while: "{{ repeat.index <= num_device_classes }}"
+      sequence:
+        - variables:
+            device_class: "{{ device_classes[ repeat.index - 1 ] }}"
+        - choose:
+            conditions: "{{ states|selectattr('attributes.device_class', 'eq', device_class)|list|length > 0 }}"
+            sequence: 
+              - service: group.set
+                data:
+                  object_id: "{{ device_class }}"
+                  add_entities: "{{ states|selectattr('attributes.device_class', 'eq', device_class)|map(attribute='entity_id')|list }}"
+              - repeat:
+                  while: "{{ repeat.index <= num_areas }}"
+                  sequence:
+                    - variables:
+                        area: "{{ areas[ repeat.index - 1 ] }}"
+                        area_entities: >-
+                          {% set entities = namespace(list=[]) %}
+                          {% for entity in expand('group.' + device_class) if area_name(entity.entity_id) == area %}
+                            {% set entities.list = entities.list + [ entity.entity_id ] %}
+                          {% endfor %}
+                          {{ entities.list }}
+                    - choose:
+                        conditions: "{{ area_entities|length > 0 }}"
+                        sequence:
+                          - service: group.set
+                            data:
+                              object_id: "{{ area.replace(' ', '_')|lower + '_' + device_class }}"
+                              add_entities: "{{ area_entities }}"
