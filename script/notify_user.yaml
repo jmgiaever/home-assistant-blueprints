@@ -21,4 +21,4 @@ sequence:
   - alias: "Send notification"
     service: "{{ device }}"
     data: >-
-     "{{ data if defined else {} }}"
+     {{ data if defined else {} }}

@@ -2,12 +2,28 @@ blueprint:
   domain: automation
   name: Motion detected lights
   description: >-
-    Description
+    Activate lights based on binary_sensors. This is typically a motion sensor, but can also be a door sensor.
+
+    The automation features:
+      - dim light(s) before turning them off to alert present people that the sensors have become "off" and
+        the automation will turn off the lights. The current states of each lights is stored in a scene, so
+        if the ones in that room then move - the lights will dim back to the current state by applying the
+        stored scene.
+
+      - a parallel thread that will listen for light changes, e.g: The automation is triggered multiple times
+        whenever anyone is in the room. If you have adjusted the light level or turned off any lights while
+        the automation is running, these changes are stored to the scene, so the lights will stay in same state.
+
+      - «wait for action» either before the lights are dimmed or while the lights are dimmed down. This is
+        perfect to use when the house state is in «cleaning mode», while someone is showering (high humdity)
+        and the motion sensor can't register motion because of the steam etc.
   input:
     trigger_sensors:
       name: Trigger sensors
       description: >-
-        Description
+        Sensors that will trigger this automation. It can be a motion sensor, door sensor etc. Any areas
+        or devices that is given in this input will be crawled for binary_sensors, so it's recommended
+        to only list entities explicitly with their entity_id.
       selector:
         target:
           entity:
@@ -15,17 +31,49 @@ blueprint:
     synced_lights:
       name: Synced lights
       description: >-
-        Description
+        Lights that will syncronize the trigger sensors. Any areas or devices that is given in this input 
+        will be crawled for light entities, so it's recommended to only list entities explicitly with their 
+        entity_id.
       selector:
         target:
           entity:
             domain: light
+    illuminance_sensors:
+      name: Lux sensors
+      description: >-
+        Lux (illuminance) sensor to monitor. If the threshold are met, the lights will stay off. The average
+        illuminance will be calculated if several devices is set.
+      default: []
+      selector:
+        target:
+          entity:
+            domain: sensor
+            device_class: illuminance
+    illuminance_threshold:
+      name: Lux threshold
+      description: >-
+        Threshold before lights are turned on. Default (-1) means that the lux threshold won't be considered.
+      default: -1.0
+      selector:
+        number:
+          max: 100.0
+          min: -1.0
+          step: 0.1 
+    invalidate_scene:
+      name: Invalidate scene
+      description: >-
+        Invalidate scene after lights is turned completely off. This is great if you want to be able 
+        to turn off certain lights while you're in the room, but when no-one is there for the «delay» 
+        and the lights will be turned OFF it won't restore the scene but restore every light to the 
+        state stored in their internal memory.
+      default: "{{ true }}"
+      selector:
+        boolean: 
     dim_percentage:
       name: Dim-percentage
       description: >-
-        Dim lights to this level (%) of current light level,
-        before turning lights off. Current level will be stored
-        in a scene. Setting this to 0.0 or 1.0 will skip this action.
+        Dim lights to this level (%) of current light level before turning lights off. Current level 
+        will be stored in a scene. Setting this to 0.0 or 1.0 will skip this action.
       default: 0.3
       selector:
         number:
@@ -35,18 +83,17 @@ blueprint:
     after_wait_actions:
       name: Wait actions
       description: >-
-        Actions to run to delay further, e.g wait until media player state is off,
-        housekeeping mode is off etc.
+        Actions to run to delay further, e.g wait until media player state is off, housekeeping mode 
+        is off, humidity is back down etc.
       default: []
       selector:
         action:
     wait_actions_before_dim:
       name: Wait actions before dim
       description: >-
-        Run wait actions before dimming down (not turning off). Set to false/OFF
-        if you want wait actions to run after dimming instead, but before turning 
-        OFF completely.
-      default: true
+        Run wait actions before dimming down (not turning off). Set to false/OFF if you want wait 
+        actions to run after dimming instead, but before turning OFF completely.
+      default: "{{ true }}"
       selector:
         boolean: 
     delay:
@@ -88,21 +135,6 @@ trigger_variables:
     {{ sensors.entities|unique|list }}
   scene_name: >-
     {{ this.entity_id.replace('.', '_') }}
-
-trigger:
-  - platform: template
-    value_template: >-
-      {% set sensors = namespace(triggered=false) %}
-      {% for sensor in trigger_sensors if is_state(sensor, 'on') %}
-        {% set sensors.triggered = true %}
-      {% endfor %}
-      {{ sensors.triggered }}
-  - platform: event
-    event_type: "motion_detected_lights"
-    event_data:
-      end: "{{ scene_name }}"
-
-variables:
   synced_lights_inputs: !input synced_lights
   synced_lights: >-
     {% set lights = namespace(entities=[]) %}
@@ -126,7 +158,51 @@ variables:
       {% endfor %}
     {% endif %}
     {{ lights.entities|unique|list|sort }}
-  invalid_light: >-
+
+trigger:
+  ############ Hack for ############
+  # - platform: state              #
+  #   entity_id: "{{ sensors }}"   #
+  ##################################
+  - platform: template
+    value_template: >-
+      {% set sensors = namespace(triggered=false) %}
+      {% for sensor in trigger_sensors if is_state(sensor, 'on') %}
+        {% set sensors.triggered = true %}
+      {% endfor %}
+      {{ sensors.triggered }}
+  - platform: event
+    event_type: "motion_detected_lights"
+    event_data:
+      end: "{{ scene_name }}"
+
+variables:
+  illuminance_sensors_input: !input illuminance_sensors
+  illuminance_sensors: >-
+    {% set sensors = namespace(entities=[]) %}
+    {% if 'entity_id' in illuminance_sensors_input %}
+      {% for entity in ([ illuminance_sensors_input['entity_id'] ] if illuminance_sensors_input['entity_id'] is string else illuminance_sensors_input['entity_id']) %}
+        {% set sensors.entities = sensors.entities + [entity] %}
+      {% endfor %}
+    {% endif %}
+    {% if 'area_id' in illuminance_sensors_input %}
+      {% for area in ([ illuminance_sensors_input['area_id'] ] if illuminance_sensors_input['area_id'] is string else illuminance_sensors_input['area_id']) %}
+        {% for entity in area_entities(area) if state_attr(entity, 'device_class') == 'illuminance' %}
+          {% set sensors.entities = sensors.entities + [entity] %}
+        {% endfor %}
+      {% endfor %}
+    {% endif %}
+    {% if 'device_id' in trigger_sensors_input %}
+      {% for device in ([ illuminance_sensors_input['device_id'] ] if illuminance_sensors_input['device_id'] is string else illuminance_sensors_input['device_id']) %}
+        {% for entity in device_entities(device) if state_attr(entity, 'device_class') == 'illuminance' %}
+          {% set sensors.entities = sensors.entities + [entity] %}
+        {% endfor %}
+      {% endfor %}
+    {% endif %}
+    {{ sensors.entities|unique|list }}
+  illuminance_threshold: !input illuminance_threshold
+  invalidate_scene: !input invalidate_scene
+  invalid_light: >- # Used to invalidate scene as there's no other way to do it at the moment
     {{ states.light|rejectattr('entity_id', 'in', synced_lights)|map(attribute='entity_id')|first }}
   log_level: warning
   dim_percentage: !input dim_percentage
@@ -135,11 +211,32 @@ variables:
   wait_actions_before_dim: !input wait_actions_before_dim
 
 action:
-  - alias: "Triggered on motion or (any) event"
+  - alias: "Triggered on motion or event"
     if: "{{ trigger.platform != 'event' }}"
     then:
 
-      - alias: "Turn on scene if it already exists, otherwise turn on lights."
+      - choose:
+          conditions: 
+            - condition: template
+              value_template: "{{ illuminance_threshold != -1 }}"
+            - condition: template
+              value_template: >-
+                {% set lights = namespace(on=false) %}
+                {% for light in synced_lights if is_state(light, 'on') %}
+                  {% set lights.on = true %}
+                {% endfor %}
+                {{ not lights.on }}
+            - condition: template
+              value_template: >-
+                {% set lux = namespace(values=[]) %}
+                {% for sensor in illuminance_sensors %}
+                  {% set lux.values = lux.values + [ state(sensor) ] %}
+                {% endfor %}
+                {{ false if lux.values|count == 0 else (lux.values|sum / lux.values|count)|int > illuminance_threshold }}
+          sequence:
+            stop: "Illuminance threshold met"
+
+      - alias: "Motion: Turn on exisiting scene or turn on lights."
         continue_on_error: true # if scenes are empty (might happen after a scene.reload)
         choose:
           conditions: "{{ states.scene | selectattr('attributes.friendly_name', 'eq', scene_name) | list | count == 1 and synced_lights == state_attr('scene.' + scene_name, 'entity_id')|sort }}"
@@ -148,10 +245,11 @@ action:
             - service: system_log.write
               data:
                 level: "{{ log_level }}"
+                logger: "{{ scene_name }}"
                 message: >-
                   Scene «{{ scene_name }}» already exists and contains all lights. Restore scene.
             
-            - alias: "Turn on scene for synced lights"
+            - alias: "Motion: Turn on existing scene for synced lights"
               service: scene.turn_on
               target:
                 entity_id: "scene.{{scene_name}}"
@@ -161,19 +259,19 @@ action:
             continue_on_error: true
             data:
               level: "{{ log_level }}"
+              logger: "{{ scene_name }}"
               message: >-
                 Scene «{{ scene_name }} does NOT exist or is INVALID. 
                 Entities to sync: {{ synced_lights }} => Turn ON every light sourcce.
         
-          - alias: "Turn on synced lights"
+          - alias: "Motion: Turn on synced lights"
             service: light.turn_on
             target:
               entity_id: "{{ synced_lights }}"
 
       - alias: >-
-          Listen for light changes and motion in parallel. 
-          Save snapshorts to scene on light changes. 
-          End this part of automation when motion stops.
+          Listen for light changes and motion in parallel. Save snapshots to scene on 
+          light changes. End this part of automation when motion stops.
         parallel: 
         # Listen for light changes in parallel and save snapshot to a scene
         # so we dont restore light every time the motion is triggered without being OFF
@@ -214,6 +312,7 @@ action:
               - service: system_log.write
                 data:
                   level: "{{ log_level }}"
+                  logger: "{{ scene_name }}"
                   message: >-
                     Light levels changed: {{ synced_lights }} from {{ synced_lights_values }}.
                     Saving snapshot to scene «{{ scene_name }}».
@@ -233,6 +332,7 @@ action:
                     service: system_log.write
                     data:
                       level: "{{ log_level }}"
+                      logger: "{{ scene_name }}"
                       message: "No lights on: invalidating with {{ invalid_light }} which isn't in {{ synced_lights }}."
                     
               - alias: "Save scene for current change and return to loop. If no lights are ON; invalidate scene."
@@ -258,6 +358,7 @@ action:
           - service: system_log.write
             data:
               level: "{{ log_level }}"
+              logger: "{{ scene_name }}"
               message: >-
                 No motion detected by {{ trigger_sensors }}. Run wait actions
                 wait {{ (delay_seconds * 1/3)|int }} seconds,, then end 
@@ -283,6 +384,7 @@ action:
       - service: system_log.write
         data: 
           level: "{{ log_level }}"
+          logger: "{{ scene_name }}"
           message: "Ending {{ scene_name }}, dim down and eventually turn off {{ synced_lights }}."
       
       - alias: "Calculate average brightness and set dim level"
@@ -301,10 +403,11 @@ action:
 
       - service: system_log.write
         data:
+          level: "{{ log_level }}"
+          logger: "{{ scene_name }}"
           message: >-
             Light avg-brightness is: {{ brightness }}, now dimming lights 
             with {{ (dim_percentage * 100)|int }}% to {{ dim_level }}".
-          level: "{{ log_level }}"
       
       - alias: "Dim lights to a low brightness to alert no motion"
         service: light.turn_on
@@ -329,8 +432,12 @@ action:
         target:
           entity_id: "{{ synced_lights }}"
 
-      # - alias: "Invalidate scene."
-      #   service: scene.create
-      #   data:
-      #     scene_id: "{{ scene_name }}"
-      #     snapshot_entities: "{{ [ invalid_light ] }}"
+      - alias: "Invalidate scene if TRUE"
+        condition: template
+        value_template: "{{ invalidate_scene is true }}"
+
+      - alias: "Invalidate scene."
+        service: scene.create
+        data:
+          scene_id: "{{ scene_name }}"
+          snapshot_entities: "{{ [ invalid_light ] }}"
