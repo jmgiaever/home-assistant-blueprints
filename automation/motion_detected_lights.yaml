@@ -220,7 +220,7 @@ action:
             - condition: template
               value_template: "{{ illuminance_threshold != -1 and illuminance_sensors|count > 0 }}"
             - condition: template
-              value_template: >-
+              value_template: >- # If any lights are on... Continue so they eventually will turn off
                 {% set lights = namespace(on=false) %}
                 {% for light in synced_lights if is_state(light, 'on') %}
                   {% set lights.on = true %}
@@ -271,10 +271,9 @@ action:
 
       - alias: >-
           Listen for light changes and motion in parallel. Save snapshots to scene on 
-          light changes. End this part of automation when motion stops.
+          light changes. we dont restore light every time the motion is triggered without 
+          being OFF. End this part of automation when motion stops.
         parallel: 
-        # Listen for light changes in parallel and save snapshot to a scene
-        # so we dont restore light every time the motion is triggered without being OFF
         
         - alias: >-
             Listen for light changes for as long as this automation lives, 
