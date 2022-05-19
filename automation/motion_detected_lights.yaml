@@ -406,7 +406,7 @@ action:
           logger: "{{ scene_name }}"
           message: >-
             Light avg-brightness is: {{ brightness }}, now dimming lights 
-            with {{ (dim_percentage * 100)|int }}% to {{ dim_level }}".
+            with {{ (dim_percentage * 100)|int }}% to {{ dim_level }}.
       
       - alias: "Dim lights to a low brightness to alert no motion"
         service: light.turn_on
