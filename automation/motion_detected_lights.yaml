@@ -25,9 +25,9 @@ blueprint:
         or devices that is given in this input will be crawled for binary_sensors, so it's recommended
         to only list entities explicitly with their entity_id.
       selector:
-        target:
-          entity:
-            domain: binary_sensor
+        entity:
+          domain: binary_sensor
+          multiple: true
     synced_lights:
       name: Synced lights
       description: >-
@@ -35,9 +35,8 @@ blueprint:
         will be crawled for light entities, so it's recommended to only list entities explicitly with their 
         entity_id.
       selector:
-        target:
-          entity:
-            domain: light
+        entity:
+          domain: light
     illuminance_sensors:
       name: Lux sensors
       description: >-
@@ -45,10 +44,9 @@ blueprint:
         illuminance will be calculated if several devices is set.
       default: []
       selector:
-        target:
-          entity:
-            domain: sensor
-            device_class: illuminance
+        entity:
+          domain: sensor
+          device_class: illuminance
     illuminance_threshold:
       name: Lux threshold
       description: >-
@@ -59,16 +57,6 @@ blueprint:
           max: 100.0
           min: -1.0
           step: 0.1 
-    invalidate_scene:
-      name: Invalidate scene
-      description: >-
-        Invalidate scene after lights is turned completely off. This is great if you want to be able 
-        to turn off certain lights while you're in the room, but when no-one is there for the «delay» 
-        and the lights will be turned OFF it won't restore the scene but restore every light to the 
-        state stored in their internal memory.
-      default: "{{ true }}"
-      selector:
-        boolean: 
     dim_percentage:
       name: Dim-percentage
       description: >-
@@ -112,65 +100,29 @@ mode: restart
 trigger_variables:
   trigger_sensors_input: !input trigger_sensors
   trigger_sensors: >-
-    {% set sensors = namespace(entities=[]) %}
-    {% if 'entity_id' in trigger_sensors_input %}
-      {% for entity in ([ trigger_sensors_input['entity_id'] ] if trigger_sensors_input['entity_id'] is string else trigger_sensors_input['entity_id']) %}
-        {% set sensors.entities = sensors.entities + [entity] %}
-      {% endfor %}
-    {% endif %}
-    {% if 'area_id' in trigger_sensors_input %}
-      {% for area in ([ trigger_sensors_input['area_id'] ] if trigger_sensors_input['area_id'] is string else trigger_sensors_input['area_id']) %}
-        {% for entity in area_entities(area) if entity.startswith('binary_sensor.') %}
-          {% set sensors.entities = sensors.entities + [entity] %}
-        {% endfor %}
-      {% endfor %}
-    {% endif %}
-    {% if 'device_id' in trigger_sensors_input %}
-      {% for device in ([ trigger_sensors_input['device_id'] ] if trigger_sensors_input['device_id'] is string else trigger_sensors_input['device_id']) %}
-        {% for entity in device_entities(device) if entity.startswith('binary_sensor.') %}
-          {% set sensors.entities = sensors.entities + [entity] %}
-        {% endfor %}
-      {% endfor %}
-    {% endif %}
-    {{ sensors.entities|unique|list }}
+    {{ trigger_sensors_input|unique|sort }}
   scene_name: >-
     {{ this.entity_id.replace('.', '_') }}
-  synced_lights_inputs: !input synced_lights
+  synced_lights_input: !input synced_lights
   synced_lights: >-
-    {% set lights = namespace(entities=[]) %}
-    {% if 'entity_id' in synced_lights_inputs %}
-      {% for entity in ([ synced_lights_inputs['entity_id'] ] if synced_lights_inputs['entity_id'] is string else synced_lights_inputs['entity_id']) %}
-        {% set lights.entities = lights.entities + [entity] %}
-      {% endfor %}
-    {% endif %}
-    {% if 'area_id' in synced_lights_inputs %}
-      {% for area in ([ synced_lights_inputs['area_id'] ] if synced_lights_inputs['area_id'] is string else synced_lights_inputs['area_id']) %}
-        {% for entity in area_entities(area) if entity.startswith('light.') %}
-          {% set lights.entities = lights.entities + [entity] %}
-        {% endfor %}
-      {% endfor %}
-    {% endif %}
-    {% if 'device_id' in synced_lights_inputs %}
-      {% for device in ([ synced_lights_inputs['device_id'] ] if synced_lights_inputs['device_id'] is string else synced_lights_inputs['device_id']) %}
-        {% for entity in device_entities(device) if entity.startswith('light.') %}
-          {% set lights.entities = lights.entities + [entity] %}
-        {% endfor %}
-      {% endfor %}
-    {% endif %}
-    {{ lights.entities|unique|list|sort }}
+    {{ synced_lights_input|unique|sort }}
 
 trigger:
   ############ Hack for ############
   # - platform: state              #
   #   entity_id: "{{ sensors }}"   #
   ##################################
-  - platform: template
-    value_template: >-
-      {% set sensors = namespace(triggered=false) %}
-      {% for sensor in trigger_sensors if is_state(sensor, 'on') %}
-        {% set sensors.triggered = true %}
-      {% endfor %}
-      {{ sensors.triggered }}
+  # - platform: template
+  #   value_template: >-
+  #     {% set sensors = namespace(triggered=false) %}
+  #     {% for sensor in trigger_sensors if is_state(sensor, 'on') %}
+  #       {% set sensors.triggered = true %}
+  #     {% endfor %}
+  #     {{ sensors.triggered }}
+  - platform: state
+    # from: "off"
+    to: "on"
+    entity_id: !input trigger_sensors
   - platform: event
     event_type: "motion_detected_lights"
     event_data:
@@ -179,29 +131,29 @@ trigger:
 variables:
   illuminance_sensors_input: !input illuminance_sensors
   illuminance_sensors: >-
-    {% set sensors = namespace(entities=[]) %}
-    {% if 'entity_id' in illuminance_sensors_input %}
-      {% for entity in ([ illuminance_sensors_input['entity_id'] ] if illuminance_sensors_input['entity_id'] is string else illuminance_sensors_input['entity_id']) %}
-        {% set sensors.entities = sensors.entities + [entity] %}
-      {% endfor %}
-    {% endif %}
-    {% if 'area_id' in illuminance_sensors_input %}
-      {% for area in ([ illuminance_sensors_input['area_id'] ] if illuminance_sensors_input['area_id'] is string else illuminance_sensors_input['area_id']) %}
-        {% for entity in area_entities(area) if state_attr(entity, 'device_class') == 'illuminance' %}
-          {% set sensors.entities = sensors.entities + [entity] %}
-        {% endfor %}
-      {% endfor %}
-    {% endif %}
-    {% if 'device_id' in trigger_sensors_input %}
-      {% for device in ([ illuminance_sensors_input['device_id'] ] if illuminance_sensors_input['device_id'] is string else illuminance_sensors_input['device_id']) %}
-        {% for entity in device_entities(device) if state_attr(entity, 'device_class') == 'illuminance' %}
-          {% set sensors.entities = sensors.entities + [entity] %}
-        {% endfor %}
-      {% endfor %}
-    {% endif %}
-    {{ sensors.entities|unique|list }}
+    {{ illuminance_sensors_input|unique|sort }}
+  # {% set sensors = namespace(entities=[]) %}
+  # {% if 'entity_id' in illuminance_sensors_input %}
+  #   {% for entity in ([ illuminance_sensors_input['entity_id'] ] if illuminance_sensors_input['entity_id'] is string else illuminance_sensors_input['entity_id']) %}
+  #     {% set sensors.entities = sensors.entities + [entity] %}
+  #   {% endfor %}
+  # {% endif %}
+  # {% if 'area_id' in illuminance_sensors_input %}
+  #   {% for area in ([ illuminance_sensors_input['area_id'] ] if illuminance_sensors_input['area_id'] is string else illuminance_sensors_input['area_id']) %}
+  #     {% for entity in area_entities(area) if state_attr(entity, 'device_class') == 'illuminance' %}
+  #       {% set sensors.entities = sensors.entities + [entity] %}
+  #     {% endfor %}
+  #   {% endfor %}
+  # {% endif %}
+  # {% if 'device_id' in trigger_sensors_input %}
+  #   {% for device in ([ illuminance_sensors_input['device_id'] ] if illuminance_sensors_input['device_id'] is string else illuminance_sensors_input['device_id']) %}
+  #     {% for entity in device_entities(device) if state_attr(entity, 'device_class') == 'illuminance' %}
+  #       {% set sensors.entities = sensors.entities + [entity] %}
+  #     {% endfor %}
+  #   {% endfor %}
+  # {% endif %}
+  # {{ sensors.entities|unique|list }}
   illuminance_threshold: !input illuminance_threshold
-  invalidate_scene: !input invalidate_scene
   invalid_light: >- # Used to invalidate scene as there's no other way to do it at the moment
     {{ states.light|rejectattr('entity_id', 'in', synced_lights)|map(attribute='entity_id')|first }}
   log_level: warning
@@ -431,12 +383,9 @@ action:
         target:
           entity_id: "{{ synced_lights }}"
 
-      - alias: "Invalidate scene if TRUE"
-        condition: template
-        value_template: "{{ invalidate_scene is true }}"
-
-      - alias: "Invalidate scene."
-        service: scene.create
+      - service: system_log.write
         data:
-          scene_id: "{{ scene_name }}"
-          snapshot_entities: "{{ [ invalid_light ] }}"
+          level: "{{ log_level }}"
+          logger: "{{ scene_name }}"
+          message: >-
+            Lights {{ synced_lights }} turned off.

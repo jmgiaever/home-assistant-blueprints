@@ -1,0 +1,85 @@
+blueprint:
+  domain: automation
+  name: Cast lovelace on motion detection
+  input:
+    trigger_sensors:
+      name: Trigger sensors
+      selector:
+        entity:
+          multiple: true
+          domain: binary_sensor
+    media_devices:
+      name: Media Devices
+      selector:
+        entity:
+          integration: cast
+          multiple: true
+    dashboard_path:
+      name: Dashboard path
+      default: lovelace
+      selector:
+        text:
+          suffix: "http://ha/dashboard-path/view-path"
+    dashboard_view:
+      name: View path
+      selector:
+        text:
+          suffix: "http://ha/dashboard-path/view-path"
+
+mode: restart
+trigger:
+  platform: state
+  to: "on"
+  entity_id: !input trigger_sensors
+variables:
+  trigger_sensors: !input trigger_sensors
+  media_devices: !input media_devices
+  dashboard_path: !input dashboard_path
+  dashboard_view: !input dashboard_view
+action:
+  - service: system_log.write
+    data:
+      level: warning
+      message: >-
+        Triggered {{ trigger_sensors }}
+        For {{ media_devices }}
+  - repeat:
+      for_each: "{{ media_devices }}"
+      sequence:
+        - if: "{{ not states(repeat.item) in ['idle', 'playing', 'paused'] }}"
+          then:
+          - service: system_log.write
+            data:
+              level: warning
+              message: >-
+                Display {{ state_attr(repeat.item, "friendly_name") }} is ready for Lovelace «{{ dashboard_path }}/{{ dashboard_view }}».
+          - variables:
+              is_muted: "{{ is_state_attr(repeat.item, 'is_volume_muted', true) }}"
+          - if: "{{ is_muted }}"
+            then:
+            - service: media_player.volume_mute
+              data:
+                is_volume_muted: true
+              target:
+                entity_id: "{{ repeat.item }}"
+          - service: cast.show_lovelace_view
+            data:
+              entity_id: "{{ repeat.item }}"
+              dashboard_path: "{{ dashboard_path }}"
+              view_path: "{{ dashboard_view }}"
+          - if: "{{ is_muted }}"
+            then:
+            - wait_template: >-
+                {{ is_state_attr(repeat.item, 'app_name', 'Home Assistant Lovelace' ) }}
+            - service: media_player.volume_mute
+              data:
+                is_volume_muted: false
+              target:
+                entity_id: "{{ repeat.item }}"
+          else:
+          - service: system_log.write
+            data:
+              level: warning
+              message: >-
+                Display {{ state_attr(repeat.item, "friendly_name") }} is playing «{{ state_attr(repeat.item, 'app_name') }}», 
+                skipping launching «{{ dashboard_path }}/{{ dashboard_view }}».

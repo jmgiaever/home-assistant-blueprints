@@ -7,8 +7,8 @@ blueprint:
     notify_device:
       name: "Device to notify"
       selector:
-        entity:
-          integration: notify
+        device:
+          integration: mobile_app
       default: []
 
 mode: parallel
@@ -20,5 +20,5 @@ variables:
 sequence:
   - alias: "Send notification"
     service: "{{ device }}"
-    data: >-
-     {{ data if defined else {} }}
+    # data: >-
+    #   "{{ data if defined else {} }}"
