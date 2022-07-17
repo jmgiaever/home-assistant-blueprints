@@ -1,24 +1,142 @@
+# - service: script.notify_users
+#   data_template:
+#     title: "It's {{ first_name }}'s birthday!"
+#     users:
+#       - notify.owners
+#     message: >-
+#       It is {{ full_name }}'s birthday today. {% if age is not none %}
+#         {{- first_name }} is turning {{ age }} years.
+#       {% endif %}
+      
+#       Send them a text and say <b>Happy Birthday!</b> to let them know that you appriciate them! :)
+#     data_object:
+#       tag: "birthday-notification-{{ context.id }}-{{ first_name | upper }}"
+#       group: "birthday-notifications"
+#       color: "#A83285"
+#       icon_url: "https://home-assistant.kgv14.dev:8123/local/entities/birthday-cake.png"
+#       actions:
+#         - action: "{{ action_sms }}"
+#           title: "Send SMS"
+# - wait_for_trigger:
+#     platform: event
+#     event_type: mobile_app_notification_action
+#     event_data:
+#       action: "{{action_sms}}"
+#   timeout:
+#     hours: 24
+# - choose:
+#     conditions: "{{ wait.trigger is not none and wait.trigger.event.data.action == action_sms }}"
+#     sequence:
+#       service: notify.owners
+#       data:
+#         message: command_activity
+#         title: "sms:{{ phone_number }}?body=Gratulere med {{ age|string + 'års ' if age is not none else '' }}dagen  {{first_name}}!"
+#         data:
+#           tag: "android.intent.action.SENDTO"
+#   default:
+#     service: notify.owners
+#     data:
+#       message: clear_notification
+#       data:
+#         tag: "birthday-notification-{{ context.id }}-{{ first_name | upper }}"
+
 blueprint:
   domain: script
   name: Notify user
   description: >-
     Notify a user
   input:
-    notify_device:
-      name: "Device to notify"
+    notify_devices:
+      name: "Device(s) to notify"
       selector:
-        device:
-          integration: mobile_app
+        entity:
+          multiple: true
       default: []
+    title:
+      name: "Title"
+      selector:
+        text:
+          multiline: false
+      default: ""
+    message:
+      name: "Message"
+      selector:
+        text:
+          multiline: true
+    data:
+      name: "Data object"
+      selector:
+        object:
+      default: {}
+    tts:
+      name: "TTS"
+      selector:
+        boolean:
+      default: "{{ false }}"
 
 mode: parallel
 
 variables:
-  device: !input notify_device
-  data: "{{ {} }}"
-
+  devices_input: !input notify_devices
+  devices: >-
+    {% set devices = namespace(entity=[]) %}
+    {% for device in (
+          devices_input if devices_input is iterable and (
+            devices_input is not string and devices_input is not mapping
+          ) else [ devices_input ]
+        ) if device.startswith('notify.') or device.startswith('group.') %}
+      {% if device.startswith('group.') %}
+        {% for group_device in state_attr(device, 'entity_id') if group_device.startswith('notify.') %}
+          {% set devices.entity = devices.entity + [ group_device ] %}
+        {% endfor %}
+      {% else %}
+        {% set devices.entity = devices.entity + [ device ] %}
+      {% endif %}
+    {% endfor %}
+    {{ devices.entity }}
+  title: !input title
+  message: !input message
+  data: !input data
+  tts: !input tts
+  actions: >-
+    {% set actions = namespace(name=[]) %}
+    {% for action in (data.actions if 'actions' in data else []) %}
+      {% set actions.name = actions.name + [ action.action ] %}
+    {% endfor %}
+    {{ actions.name }}
+  tag: "tag-{{ this.context.id }}"
 sequence:
-  - alias: "Send notification"
-    service: "{{ device }}"
-    # data: >-
-    #   "{{ data if defined else {} }}"
+  - service: system_log.write
+    data:
+      level: warning
+      message: >-
+        Notify-devices:
+        
+        - {{ devices_input|join("\n\n - ") }}
+        
+        Devices: 
+
+        - {{ devices|join("\n\n - ") }}
+
+        Data: {{ data }}
+
+        Actions: {{ actions }}
+  - repeat:
+      for_each: "{{ devices }}"
+      sequence:
+      - variables:
+          tag: "{{ tag }}-{{ repeat.index }}"
+      - if: "{{ tts }}"
+        then:
+          alias: "Send TTS"
+          service: "{{ repeat.item }}"
+          data:
+            title: "{{ title if title.strip()|length > 0 else message|truncate(50, true) }}"
+            message: "TTS"
+      - alias: "Send notification"
+        service: "{{ repeat.item }}"
+        data:
+          title: "{{ title if title.strip()|length > 0 else '' }}"
+          message: "{{ message }} {{ tag }}"
+          data: >-
+            {{ data }}

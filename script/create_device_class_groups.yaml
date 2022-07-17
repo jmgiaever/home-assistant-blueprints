@@ -24,33 +24,58 @@ sequence:
         {{ areas|length if areas is not string and areas is iterable else 0 }}
       num_device_classes: >-
         {{ device_classes|length if areas is not string and device_classes is iterable else 0 }}
+  - service: system_log.write
+    data:
+      level: "warning"
+      message: >-
+        Creating groups for:
+
+        - {{ device_classes | join("\n\n- ")}}
+
+        and areas:
+
+        - {{ areas | join("\n\n- ")}}
   - repeat:
       while: "{{ repeat.index <= num_device_classes }}"
       sequence:
         - variables:
-            device_class: "{{ device_classes[ repeat.index - 1 ] }}"
+            device_class_name: "{{ device_classes[ repeat.index - 1 ] }}"
+            devices: >-
+              {{ states|selectattr('attributes.device_class', 'eq', device_class_name)|map(attribute='entity_id')|list }}
         - choose:
-            conditions: "{{ states|selectattr('attributes.device_class', 'eq', device_class)|list|length > 0 }}"
+            conditions: "{{ devices|length > 0 }}"
             sequence: 
+              # - service: system_log.write
+              #   data:
+              #     level: "warning"
+              #     message: "Creating «group.{{ device_class_name }}» for {{ devices|length }} entities: {{ devices }}"
               - service: group.set
                 data:
-                  object_id: "{{ device_class }}"
-                  add_entities: "{{ states|selectattr('attributes.device_class', 'eq', device_class)|map(attribute='entity_id')|list }}"
+                  object_id: "{{ device_class_name }}"
+                  add_entities: "{{ devices }}"
               - repeat:
                   while: "{{ repeat.index <= num_areas }}"
                   sequence:
                     - variables:
                         area: "{{ areas[ repeat.index - 1 ] }}"
+                        area_group_name: "{{ area.replace(' ', '_')|lower + '_' + device_class_name }}"
                         area_entities: >-
                           {% set entities = namespace(list=[]) %}
-                          {% for entity in expand('group.' + device_class) if area_name(entity.entity_id) == area %}
+                          {% for entity in expand('group.' + device_class_name) if area_name(entity.entity_id) == area %}
                             {% set entities.list = entities.list + [ entity.entity_id ] %}
                           {% endfor %}
                           {{ entities.list }}
                     - choose:
                         conditions: "{{ area_entities|length > 0 }}"
                         sequence:
+                          # - service: system_log.write
+                          #   data:
+                          #     level: "warning"
+                          #     message: >-
+                          #       Creating «group.{{ area_group_name }}» with:
+
+                          #       {{ area_entities | join("\n\n- ")}}
                           - service: group.set
                             data:
-                              object_id: "{{ area.replace(' ', '_')|lower + '_' + device_class }}"
+                              object_id: "{{ area_group_name }}"
                               add_entities: "{{ area_entities }}"

@@ -53,29 +53,25 @@ action:
               level: warning
               message: >-
                 Display {{ state_attr(repeat.item, "friendly_name") }} is ready for Lovelace «{{ dashboard_path }}/{{ dashboard_view }}».
-          - variables:
-              is_muted: "{{ is_state_attr(repeat.item, 'is_volume_muted', true) }}"
-          - if: "{{ not is_muted }}"
-            then:
-            - service: media_player.volume_mute
-              data:
-                is_volume_muted: true
-              target:
-                entity_id: "{{ repeat.item }}"
+          - service: media_player.volume_mute
+            data:
+              is_volume_muted: true
+            target:
+              entity_id: "{{ repeat.item }}"
           - service: cast.show_lovelace_view
             data:
               entity_id: "{{ repeat.item }}"
               dashboard_path: "{{ dashboard_path }}"
               view_path: "{{ dashboard_view }}"
-          - if: "{{ not is_muted }}"
-            then:
-            - wait_template: >-
-                {{ is_state_attr(repeat.item, 'app_name', 'Home Assistant Lovelace' ) }}
-            - service: media_player.volume_mute
-              data:
-                is_volume_muted: false
-              target:
-                entity_id: "{{ repeat.item }}"
+          - wait_template: >-
+              {{ is_state_attr(repeat.item, 'app_name', 'Home Assistant Lovelace' ) }}
+          - delay:
+              seconds: 2
+          - service: media_player.volume_mute
+            data:
+              is_volume_muted: false
+            target:
+              entity_id: "{{ repeat.item }}"
           else:
           - service: system_log.write
             data:
