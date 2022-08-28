@@ -223,6 +223,7 @@ action:
             while: "{{ true }}" 
             sequence:
 
+         
               - alias: "Store variable with current light values (on or brightness)"
                 variables:
                   synced_lights_values: >-

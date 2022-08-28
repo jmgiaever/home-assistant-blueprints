@@ -29,11 +29,8 @@ sequence:
       level: "warning"
       message: >-
         Creating groups for:
-
         - {{ device_classes | join("\n\n- ")}}
-
         and areas:
-
         - {{ areas | join("\n\n- ")}}
   - repeat:
       while: "{{ repeat.index <= num_device_classes }}"
@@ -45,10 +42,6 @@ sequence:
         - choose:
             conditions: "{{ devices|length > 0 }}"
             sequence: 
-              # - service: system_log.write
-              #   data:
-              #     level: "warning"
-              #     message: "Creating «group.{{ device_class_name }}» for {{ devices|length }} entities: {{ devices }}"
               - service: group.set
                 data:
                   object_id: "{{ device_class_name }}"
@@ -68,13 +61,6 @@ sequence:
                     - choose:
                         conditions: "{{ area_entities|length > 0 }}"
                         sequence:
-                          # - service: system_log.write
-                          #   data:
-                          #     level: "warning"
-                          #     message: >-
-                          #       Creating «group.{{ area_group_name }}» with:
-
-                          #       {{ area_entities | join("\n\n- ")}}
                           - service: group.set
                             data:
                               object_id: "{{ area_group_name }}"

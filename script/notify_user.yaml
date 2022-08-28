@@ -46,30 +46,66 @@ blueprint:
   description: >-
     Notify a user
   input:
-    notify_devices:
-      name: "Device(s) to notify"
+    notify_device:
+      name: "Devices to notify"
+      description: >-
+        The name of the notify service, e.g service.mobile_app_x
       selector:
-        entity:
-          multiple: true
-      default: []
-    title:
-      name: "Title"
+        object:        
+    index:
+      name: Device index
+      description: >-
+        If called several times within same context, increase this for each.
+      default:
+        seconds: 0
       selector:
-        text:
-          multiline: false
-      default: ""
-    message:
-      name: "Message"
+        number:
+          min: 1
+          max: 1000
+          step: 1
+    timeout:
+      name: "Timeout"
+      description: >-
+        Timeout before notifications dissapear. 
       selector:
-        text:
-          multiline: true
+        duration:
+          # enable_days: true
     data:
-      name: "Data object"
+      name: "Message data"
+      description: "Equal to data field in the notify service"
+      selector:
+        object:
+    # Scripts to run based on `data->actions` set in notify-service. E.g:
+    # ```
+    # data:
+    #   actions:
+    #     - action: ACTION_ANCHOR
+    #       title: This test
+    # ```
+    # with matching:
+    # ```
+    # action_scripts:
+    #   ACTION_ANCHOR: script...
+    # ```
+    # The format for `ACTION_ANCHOR` can be just a string, referencing a script,
+    # or an object with the following format:
+    # ```
+    # ACTION_ANCHOR:
+    #   script: script..
+    #   variables:
+    #     var1: ....
+    # ```
+    action_scripts:
+      name: Action scripts
+      description: >-
+        Read `action_scripts` comments within blueprint.
       selector:
         object:
       default: {}
+    
     tts:
       name: "TTS"
+      description: "Not used yet"
       selector:
         boolean:
       default: "{{ false }}"
@@ -77,66 +113,235 @@ blueprint:
 mode: parallel
 
 variables:
-  devices_input: !input notify_devices
-  devices: >-
-    {% set devices = namespace(entity=[]) %}
-    {% for device in (
-          devices_input if devices_input is iterable and (
-            devices_input is not string and devices_input is not mapping
-          ) else [ devices_input ]
-        ) if device.startswith('notify.') or device.startswith('group.') %}
-      {% if device.startswith('group.') %}
-        {% for group_device in state_attr(device, 'entity_id') if group_device.startswith('notify.') %}
-          {% set devices.entity = devices.entity + [ group_device ] %}
-        {% endfor %}
-      {% else %}
-        {% set devices.entity = devices.entity + [ device ] %}
+  input_notify_device: !input notify_device
+  index: !input index
+  ctx: "{{ this.context.id + '_' + input_notify_device ~ '_' ~ index }}" # 
+  
+  input_timeout: !input timeout
+  update_timeout: >-
+    {% set seconds = 0 %}
+    {% if input_timeout is iterable %}
+      {% if 'seconds' in input_timeout %}
+        {% set seconds = seconds + input_timeout.seconds|int %}
       {% endif %}
+      {% if 'minutes' in input_timeout %}
+        {% set seconds = seconds + (input_timeout.minutes|int * 60 * 60) %}
+      {% endif %}
+      {% if 'hours' in input_timeout %}
+        {% set seconds = seconds + ((input_timeout.hours|int) * 60 * 60) %}
+      {% endif %}
+      {% if 'days' in input_timeout %}
+        {% set seconds = seconds + ((input_timeout.days|int) * 60 * 60 * 24) %}
+      {% endif %}
+    {% elif input_timeout is not iterable %}
+      {% set seconds = input_timeout|int %}
+    {% endif %}
+    {{ 0 if seconds == 0 else (now().timestamp() + seconds) }}
+
+  input_data: !input data
+  update_data: >-
+    {% set data_data = (input_data.data.items() | list) if 'data' in input_data else [] %}
+    {% if 'data' in input_data %}
+      {% if 'actions' in input_data.data %}
+        {% set action = namespace(entities=[]) %}
+        {% for a in input_data.data.actions %}
+          {% set update = {"action": ctx ~ '_' ~ a.action}.items() | list %}
+          {% set current = a.items() | list | rejectattr(
+            '0', 'eq', update | map(attribute='0') | list
+          ) | list %}
+          {% set action.entities = action.entities + [
+            dict.from_keys(current + update) 
+          ] %}  
+        {% endfor %}
+        {% set actions = { "actions": action.entities }.items() | list %}
+        {% set data_data = dict.from_keys(data_data | rejectattr(
+            '0', 'eq', actions | map(attribute='0') | list
+          ) | list + actions).items() | list
+        %}
+      {% endif %}
+      {% if 'group' not in input_data.data %}
+        {% set add = { "group": "default-group" }.items() | list %}
+        {% set data_data = dict.from_keys(data_data | rejectattr(
+            '0', 'eq', add | map(attribute='0') | list
+          ) | list + add).items() | list 
+        %}
+      {% endif %}
+      {% if (
+          (
+            'alert_once' in input_data.data or 
+            'actions' in input_data.data or
+            'persistent' in input_data.data
+          ) and 'tag' not in input_data.data
+        ) or (
+          timeout != 0 and 'tag' not in input_data.data
+        )
+      %}
+        {% set add = { "tag": "tag_" + ctx }.items() | list %}
+        {% set data_data = dict.from_keys(data_data | rejectattr(
+            '0', 'eq', add | map(attribute='0') | list
+          ) | list + add).items() | list 
+        %}
+      {% endif %}
+    {% else %}
+      {% if timeout != 0 %}
+        {% set add = { "tag": "tag_" + ctx }.items() | list %}
+        {% set data_data = dict.from_keys(data_data | rejectattr(
+            '0', 'eq', add | map(attribute='0') | list
+          ) | list + add).items() | list 
+        %}
+      {% endif %}
+    {% endif %}
+    
+    {% if data_data|length != 0 %}
+      {% set data_data = {"data": dict.from_keys(data_data)}.items() | list %}
+      {{ dict.from_keys((input_data.items() | list | rejectattr(
+        '0', 'eq', data_data | map(attribute='0') | list
+      ) | list) + data_data) }}
+    {% else %}
+      {{ input_data }}
+    {% endif %}
+
+  action_scripts: !input action_scripts
+  action_handlers: >-
+    {% set actions = namespace(handlers=[]) %}
+    {% for ask in action_scripts.keys() %}
+      {% set askc = ctx ~ '_' ~ ask %}
+      {% for action in update_data.data.actions if askc == action.action %}
+        {% set actions.handlers = actions.handlers + [(
+          askc, action_scripts[ask]
+        )] %}
+      {% endfor %}
     {% endfor %}
-    {{ devices.entity }}
-  title: !input title
-  message: !input message
-  data: !input data
-  tts: !input tts
-  actions: >-
-    {% set actions = namespace(name=[]) %}
-    {% for action in (data.actions if 'actions' in data else []) %}
-      {% set actions.name = actions.name + [ action.action ] %}
-    {% endfor %}
-    {{ actions.name }}
-  tag: "tag-{{ this.context.id }}"
-sequence:
-  - service: system_log.write
-    data:
-      level: warning
-      message: >-
-        Notify-devices:
-        
-        - {{ devices_input|join("\n\n - ") }}
-        
-        Devices: 
+    {{ dict.from_keys(actions.handlers) }}
 
-        - {{ devices|join("\n\n - ") }}
+sequence: 
+  # - service: system_log.write
+  #   data:
+  #     level: warning
+  #     message: >-
+  #       Action handlers: {{ action_handlers }}
+  #       Timeout: {{ update_timeout }} seconds
+  #       Data: {{ update_data }}
+  
+  - alias: "Parallize event listeners and notification"
+    parallel:
+    - alias: "Listen for event if actions are given"
+      if: "{{ action_handlers|length > 0 }}"
+      then:
+        - alias: "Loop for events until criterias are met"
+          repeat:
+            while: "{{ (update_timeout - now().timestamp() > 0) or update_timeout == 0 }}"
+            sequence:
+              - if: "{{ update_timeout == 0 }}"
+                then:
+                  alias: "Wait for app event, without timeout"
+                  wait_for_trigger:
+                    - platform: event
+                      event_type: 
+                        - mobile_app_notification_action
+                        - mobile_app_notification_cleared
+                else:
+                  alias: "Wait for app event, with timeout"
+                  wait_for_trigger:
+                    - platform: event
+                      event_type: 
+                        - mobile_app_notification_action
+                        - mobile_app_notification_cleared
+                  timeout: >-
+                    {{ update_timeout - now().timestamp() }}
 
-        Data: {{ data }}
+              - if: "{{ wait.trigger is none }}"
+                then:
+                  alias: "Reached timeout, stopping."
+                  stop: "Reached timeout, stopping."
+              
+              - variables: 
+                  in_ctx: >-
+                    {% set in_ctx = namespace(bool=false) %}
+                    {% for key in wait.trigger.event.data.keys() if key.startswith('action') and key.endswith('key') %}
+                      {% if wait.trigger.event.data[key].startswith(ctx) %}
+                        {% set in_ctx.bool = true %}
+                      {% endif %}
+                    {% endfor %}
+                    {{ in_ctx.bool }}
 
-        Actions: {{ actions }}
-  - repeat:
-      for_each: "{{ devices }}"
-      sequence:
-      - variables:
-          tag: "{{ tag }}-{{ repeat.index }}"
-      - if: "{{ tts }}"
-        then:
-          alias: "Send TTS"
-          service: "{{ repeat.item }}"
-          data:
-            title: "{{ title if title.strip()|length > 0 else message|truncate(50, true) }}"
-            message: "TTS"
-      - alias: "Send notification"
-        service: "{{ repeat.item }}"
-        data:
-          title: "{{ title if title.strip()|length > 0 else '' }}"
-          message: "{{ message }} {{ tag }}"
-          data: >-
-            {{ data }}
+              - alias: "Check if context matches or restart from top"
+                condition: "{{ in_ctx }}"
+
+              - if: >-
+                  {{ 
+                    wait.trigger.event.event_type.endswith('_cleared') or
+                    wait.trigger.event.data.action not in action_handlers.keys()
+                  }}
+                then:
+                  - alias: "Cleared event within user context"
+                    event: custom_mobile_app_notification_action
+                    event_data:
+                      context: "{{ ctx }}"
+                      action: "cleared"
+                  - stop: "User cleared notification or choose an invalid option, stop listening for events."
+
+              - event: custom_mobile_app_notification_action
+                event_data:
+                  context: "{{ ctx }}"
+                  action: "{{ wait.trigger.event.data.action }}"
+              - stop: "User acted within context, stop listening for further events."
+
+    - alias: "Listen for forwarded events"
+      if: "{{ action_handlers|length > 0 or update_timeout != 0 }}"
+      then:
+        - if: "{{ update_timeout == 0 }}"
+          then:
+            alias: "Wait for context event, without timeout"
+            wait_for_trigger:
+              - platform: event
+                event_type: custom_mobile_app_notification_action
+                event_data: 
+                  context: "{{ ctx }}"
+          else:
+            alias: "Wait for context event, with timeout"
+            wait_for_trigger:
+              - platform: event
+                event_type: custom_mobile_app_notification_action
+                event_data: 
+                  context: "{{ ctx }}"
+            timeout: >-
+              {{ update_timeout - now().timestamp() }}
+
+        - alias: "Check if timed out and remove notification"
+          if: "{{ wait.trigger == none }}"
+          then:
+            alias: "Clear notification, timeout reached."
+            service: "{{ input_notify_device }}"
+            data:
+              message: "clear_notification"
+              data:
+                tag: "{{ data.data.tag }}"
+          else:
+            - variables:
+                action: >-
+                  {% set action = wait.trigger.event.data.action %}
+                  {{ action_handlers[action] if action in action_handlers else false }}
+
+            - alias: "Action is known or stop executing"
+              condition: "{{ action is not false }}"
+
+            - if: "{{ action is string or 'variables' not in action }}"
+              then:
+                service: script.turn_on
+                target:
+                  entity_id: "{{ script }}"
+              else:
+                service: script.turn_on
+                target:
+                  entity_id: "{{ action.script }}"
+                data:
+                  variables: "{{ action.variables }}"
+
+
+    - alias: Send message to device
+      service: "{{ input_notify_device }}"
+      
+      data: >- 
+        {{ update_data }}
+      # @ignore: Incorrect type. Expected "object"
