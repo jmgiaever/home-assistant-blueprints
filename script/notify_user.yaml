@@ -13,7 +13,9 @@ blueprint:
     want to deal with the hassle of «contexting». E.g if you want to push the
     same thing to multiple devices, and let them do actions based on the data. 
 
-    Here's an example of a «happy birthday» script:
+    Here's an example of a «happy birthday» script that will notify every device
+    and let each device action on it (send an sms or dismiss it) without affecting
+    other users:
 
     ```
     script:
