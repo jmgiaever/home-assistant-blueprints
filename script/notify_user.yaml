@@ -2,7 +2,93 @@ blueprint:
   domain: script
   name: Notify user
   description: >-
-    Notify a user
+    A script blueprint that takes context into consideration where you
+    dont have to think about the parallelizm.
+
+    However, you should take into account that this script might live
+    «forever», if you're not cautious. It will spawn into three services,
+    where 2 of them might live until a script reload or a HA restart.
+
+    However 2, this script is perfect if you know what you're doing and dont
+    want to deal with the hassle of «contexting». E.g if you want to push the
+    same thing to multiple devices, and let them do actions based on the data. 
+
+    Here's an example of a «happy birthday» script:
+
+    ```
+    script:
+      birthday_wishes:
+        mode: parallel
+        sequence:
+          - variables:
+              blang: "{{ lang if lang is defined else none }}"
+              bname: "{{ name|lower|title }}"
+              bage: "{{ age|string + {1: 'st', 2: 'nd', 3: 'rd'}.get(4 if 10 <= age|int % 100 < 20 else age|int % 10, 'th') }}"
+          - service: "{{ notify_device }}"
+            data:
+              message: command_activity
+              data:
+                intent_action: "android.intent.action.SENDTO"
+                intent_uri: >-
+                  sms:{{ number }}?body={{-
+                    "🎼 «Hurra for deg som fyller ditt år, ja - deg vil jeg gratulere» 🎶 🎉 \n\n"
+                  }}{%- if blang == 'no_nb' -%}
+                    Gratulere med {{ age|default('') }}årsdagen, {{ bname }}! 🎂🎁 Håpe du får en fin dag 🥳
+                    {%- else -%}
+                    Happy {{ bage ~ ' ' if age else '' }}birthday, {{ bname }}! 🎂🎁 Hope'll get a beautiful day 🥳
+                  {%- endif -%}
+
+    automation:
+      - alias: "Birthday: Notify on birthday!"
+        trigger: 
+          - platform: calendar
+            event: start
+            entity_id: calendar.ical_birthdays
+            offset:
+              hours: 10
+        action: 
+          - repeat:
+              for_each: "{{ birthdays }}"
+              sequence:
+                # Set variables here
+                - repeat:
+                    for_each: "{{ notify_devices }}"
+                    sequence:
+                      service: script.turn_on
+                      target:
+                        entity_id: script.notify_device
+                      data:
+                        variables:
+                          notify_device: "{{ repeat.item }}"
+                          index: "{{ index }}-{{ repeat.index }}"
+                          timeout:
+                            hours: 14
+                          data:
+                              title: "It is {{ name }}'s birthday. 🎁"
+                              message: >-
+                                {% if age is not false %}
+                                  {{ name }} is turning {{ age }} today.
+                                {% else %}
+                                  {{ name }} is getting one year older today.
+                                {% endif %}
+                                Send your congratulations 🎉 to let him/her
+                                know that you appreciate them. 🥳
+                              data:
+                                actions:
+                                  - action: SEND_SMS
+                                    title: Send SMS
+                                  - action: DISMISS
+                                    title: Dismiss
+                          action_scripts:
+                            SEND_SMS:
+                              script: script.birthday_wishes
+                              variables:
+                                lang: "{{ lang }}"
+                                name: "{{ name }}"
+                                age: "{{ age }}"
+                                notify_device: "{{ repeat.item }}"
+                                number: "{{ phones|join(',') }}"
+    ```
   input:
     notify_device:
       name: "Devices to notify"
