@@ -263,6 +263,10 @@ sequence:
                           - mobile_app_notification_cleared
                         event_data:
                           device_id: "{{ device_id }}"
+                      - platform: event
+                        event_type: 'context_notification_clear'
+                        event_data:
+                          context: "{{ context.id }}"
                   else:
                     alias: "Wait for app event, with timeout"
                     wait_for_trigger:
