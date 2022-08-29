@@ -17,81 +17,57 @@ blueprint:
     and let each device action on it (send an sms or dismiss it) without affecting
     other users. 
 
-    Example usage:
-    ```
-    script:
-      notify_device:
-        alias: Notify device
-        fields:
-          notify_device:
-            name: "Device notify service"
-            description: "Device service, e.g notify.mobile_app_x"
-            selector:
-              object:
-          data:
-            name: Notification data
-            description: "Notification data, same as for notify-services"
-            selector:
-              object:
-          action_scripts:
-            name: Action scripts
-            description: >-
-              See blueprint
-            selector:
-              object:
-            default: {}
-          timeout:
-            name: "Timeout"
-            description: >-
-              Timeout before clearing event and stop waiting. 0 equals to never. 
-              Respects «Days» too in YAML mode.
-            selector:
-              duration:
-        max: 200
-        use_blueprint:
-          path: notify_user.yaml
-          input:
-            notify_device: "{{ notify_device }}"
-            index: "{{ index if index is defined else 0 }}"
-            timeout: "{{ timeout if timeout is defined else 0 }}"
-            data: "{{ data }}"
-            action_scripts: "{{ action_scripts if action_scripts is defined else {} }}"
+    Example usage
+    ``` # (create a script with this )
+      script:
+        notify_device:
+          alias: Notify device
+          fields:
+            [add fields from blueprint here]
+          max: 200
+          use_blueprint:
+            path: notify_user.yaml
+            input:
+              notify_device: "{{ notify_device }}"
+              timeout: "{{ timeout if timeout is defined else 0 }}"
+              data: "{{ data }}"
+              action_scripts: "{{ action_scripts if action_scripts is defined else {} }}"
     ```
 
     and call it:
 
     ```
-    service: script.turn_on
-    target:
-      entity_id: script.notify_device
-    data:
-      variables:
-        notify_device: "{{ notify.mobile_app_device }}"
-        data: (data as a normal "notify"-service)
-        message: "..."
-        data:
-          actions:
-            - action: DO_IT_NOW_DISMISS_ALL #Ending action with DISMISS_NOW will remove it from other devices.
-              title: Do it now
-        action_scripts:
-          DO_IT_NOW_DISMISS_ALL:
-            script: "script.my_script" #script to run if user clicks "Do it now"
-            variables:
-              var1: "Variables my script need"
+      service: script.turn_on
+      target:
+        entity_id: script.notify_device
+      data:
+        variables:
+          notify_device: "{{ notify.mobile_app_device }}"
+          data: (data as a normal "notify"-service)
+          message: "..."
+          data:
+            actions:
+              - action: DO_IT_NOW_DISMISS_ALL #Ending action with DISMISS_NOW will remove it from other devices.
+                title: Do it now
+          action_scripts:
+            DO_IT_NOW_DISMISS_ALL:
+              script: "script.my_script" #script to run if user clicks "Do it now"
+              variables:
+                var1: "Variables my script need"
     ´´´
 
     Feel free to use it within a loop too:
     ```
-    repeat:
-      for_each: >-
-        - device_1
-        - device_2
-      sequence:
-        - service: script.turn_on
-          [...]
-          data:
-            variables:
-              notify_device: "{{ repeat.item }}"
+      repeat:
+        for_each: >-
+          - device_1
+          - device_2
+        sequence:
+          - service: script.turn_on
+            [...]
+            data:
+              variables:
+                notify_device: "{{ repeat.item }}"
     ```
 
   input:
@@ -269,7 +245,6 @@ sequence:
 
   - alias: "Parallize event and action listeners"
     parallel:
-      - sequence: []
 
       - alias: "Listen for event if actions are given"
         if: "{{ action_handlers|length > 0 or update_timeout is not false }}"
@@ -324,9 +299,9 @@ sequence:
                       data:
                         title: "Notification completed"
                         message: >-
-                          {{ wait.trigger.event.data.user.split(' ')[0] }} completed the notification «{{
+                          {{ wait.trigger.event.data.user.split(' ')[0] }} completed «{{
                             (update_data.title if 'title' else update_data.message)[0:20]
-                          }}...»
+                          }}...» ✔
                         data:
                           color: "#688840"
                           timeout: 20
@@ -350,14 +325,6 @@ sequence:
                   then:
                     alias: "User cleared notification, stop listening for events."
                     stop: "User cleared notification, stop listening for events."
-
-                - service: system_log.write
-                  data:
-                    level: warning
-                    message: >-
-                      Context: {{ ctx }}\n
-                      Event-type: {{ wait.trigger.event.event_type }}\n
-                      Event-action: {{ wait.trigger.event.data.action }}
 
                 - if: "{{ wait.trigger.event.data.action.endswith('_DISMISS_ALL') }}"
                   then:
