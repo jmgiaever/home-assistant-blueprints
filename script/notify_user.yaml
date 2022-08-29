@@ -341,11 +341,6 @@ sequence:
                     action: >-
                       {{ action_handlers[ wait.trigger.event.data.action ]|default(false) }}
 
-                - service: system_log.write
-                  data:
-                    level: warning
-                    message: "Action: {{ action }}"
-
                 - alias: "Check if the action is associated with a script"
                   if: "{{ not action }}"
                   then:
