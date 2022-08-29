@@ -54,7 +54,7 @@ blueprint:
               script: "script.my_script" #script to run if user clicks "Do it now"
               variables:
                 var1: "Variables my script need"
-    ´´´
+    ```
 
     Feel free to use it within a loop too:
     ```
@@ -363,6 +363,5 @@ sequence:
       - alias: Send message to device
         service: "{{ input_notify_device }}"
 
-        data: >-
-          {{ update_data }}
         # @ignore: Incorrect type. Expected "object"
+        data: "{{ update_data }}"
