@@ -307,6 +307,8 @@ sequence:
                             (update_data.title if 'title' else update_data.message)[0:20]
                           }}...» ✔
                         data:
+                          visibility: public
+                          importance: low
                           color: "#688840"
                           timeout: 20
                           notification_icon: >-
