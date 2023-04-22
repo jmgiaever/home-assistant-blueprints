@@ -121,27 +121,6 @@ variables:
   illuminance_sensors_input: !input illuminance_sensors
   illuminance_sensors: >-
     {{ illuminance_sensors_input|unique|sort }}
-  # {% set sensors = namespace(entities=[]) %}
-  # {% if 'entity_id' in illuminance_sensors_input %}
-  #   {% for entity in ([ illuminance_sensors_input['entity_id'] ] if illuminance_sensors_input['entity_id'] is string else illuminance_sensors_input['entity_id']) %}
-  #     {% set sensors.entities = sensors.entities + [entity] %}
-  #   {% endfor %}
-  # {% endif %}
-  # {% if 'area_id' in illuminance_sensors_input %}
-  #   {% for area in ([ illuminance_sensors_input['area_id'] ] if illuminance_sensors_input['area_id'] is string else illuminance_sensors_input['area_id']) %}
-  #     {% for entity in area_entities(area) if state_attr(entity, 'device_class') == 'illuminance' %}
-  #       {% set sensors.entities = sensors.entities + [entity] %}
-  #     {% endfor %}
-  #   {% endfor %}
-  # {% endif %}
-  # {% if 'device_id' in trigger_sensors_input %}
-  #   {% for device in ([ illuminance_sensors_input['device_id'] ] if illuminance_sensors_input['device_id'] is string else illuminance_sensors_input['device_id']) %}
-  #     {% for entity in device_entities(device) if state_attr(entity, 'device_class') == 'illuminance' %}
-  #       {% set sensors.entities = sensors.entities + [entity] %}
-  #     {% endfor %}
-  #   {% endfor %}
-  # {% endif %}
-  # {{ sensors.entities|unique|list }}
   illuminance_threshold: !input illuminance_threshold
   invalid_light: >- # Used to invalidate scene as there's no other way to do it at the moment
     {{ states.light|rejectattr('entity_id', 'in', synced_lights)|map(attribute='entity_id')|first }}
@@ -150,6 +129,7 @@ variables:
   delay_minutes: !input delay
   delay_seconds: "{{ delay_minutes * 60 }}"
   wait_actions_before_dim: !input wait_actions_before_dim
+  exclude: ["off", "unavailable", "unknown"]
 
 action:
   - alias: "Triggered on motion or event"
@@ -176,6 +156,12 @@ action:
                 {{ (lux.values|sum / lux.values|count)|int > illuminance_threshold }}
           sequence:
             stop: "Illuminance threshold met"
+
+      - service: system_log.write
+        data:
+          level: warning
+          logger: "{{ scene_name }}"
+          message: "Lights: {{ synced_lights }} vs {{ synced_lights_input }}"
 
       - alias: "Motion: Turn on exisiting scene or turn on lights."
         continue_on_error: true # if scenes are empty (might happen after a scene.reload)
@@ -212,7 +198,7 @@ action:
 
       - alias: >-
           Listen for light changes and motion in parallel. Save snapshots to scene on 
-          light changes. we dont restore light every time the motion is triggered without 
+          light changes. We dont restore light every time the motion is triggered without 
           being OFF. End this part of automation when motion stops.
         parallel: 
         
@@ -223,7 +209,6 @@ action:
             while: "{{ true }}" 
             sequence:
 
-         
               - alias: "Store variable with current light values (on or brightness)"
                 variables:
                   synced_lights_values: >-
@@ -241,13 +226,26 @@ action:
                 wait_template: >-
                   {% set lights = namespace(changed=false) %}
                   {% for light in synced_lights %}
-                    {%if is_state_attr(light, 'color_mode', 'brightness') and state_attr(light, 'brightness') != synced_lights_values[loop.index - 1] %}
+                    {%if is_state_attr(light, 'color_mode', 'brightness') and not is_state_attr(light, 'brightness', synced_lights_values[loop.index0]) %}
                       {% set lights.changed = true %}
-                    {% elif not is_state_attr(light, 'color_mode', 'brightness') and states(light) != synced_lights_values[loop.index - 1] %}
+                    {% elif not is_state_attr(light, 'color_mode', 'brightness') and not is_state(light, synced_lights_values[loop.index0]) %}
                       {% set lights.changed = true %}
                     {% endif %}
                   {% endfor %}
                   {{ lights.changed }}
+
+              - alias: "Store variable with new light values (on or brightness)"
+                variables:
+                  synced_lights_new_values: >-
+                    {% set lights = namespace(values=[]) %}
+                    {% for light in synced_lights %}
+                      {%if is_state_attr(light, 'color_mode', 'brightness') %}
+                        {% set lights.values = lights.values + [state_attr(light, 'brightness')] %}
+                      {% else %}
+                        {% set lights.values = lights.values + [states(light)] %}
+                      {% endif %}
+                    {% endfor %}
+                    {{ lights.values }}
 
               # Check here if values = 0 / OFF
               - service: system_log.write
@@ -255,14 +253,14 @@ action:
                   level: "{{ log_level }}"
                   logger: "{{ scene_name }}"
                   message: >-
-                    Light levels changed: {{ synced_lights }} from {{ synced_lights_values }}.
+                    Light levels changed: {{ synced_lights }} from {{ synced_lights_values }} to {{ synced_lights_new_values }}.
                     Saving snapshot to scene «{{ scene_name }}».
 
               - alias: "Store a variable with ON lights."
                 variables:
                   synced_lights_on: >-
                     {% set lights = namespace(on=[]) %}
-                    {% for light in synced_lights if not is_state(light, 'off') %}
+                    {% for light in synced_lights if states(light) not in exclude %}
                       {% set lights.on = lights.on + [light] %}
                     {% endfor %}
                     {{ lights.on }}
@@ -275,13 +273,19 @@ action:
                       level: "{{ log_level }}"
                       logger: "{{ scene_name }}"
                       message: "No lights on: invalidating with {{ invalid_light }} which isn't in {{ synced_lights }}."
-                    
+                default:
+                  service: system_log.write
+                  data:
+                    level: "{{ log_level }}"
+                    logger: "{{ scene_name }}"
+                    message: "Lights on: {{ synced_lights_on }}."
+
               - alias: "Save scene for current change and return to loop. If no lights are ON; invalidate scene."
                 service: scene.create
                 data:
                   scene_id: "{{ scene_name }}"
                   snapshot_entities: >-
-                    {{ [ invalid_light ] if synced_lights_on|count == 0 else synced_lights }}
+                    {{ [ invalid_light ] if synced_lights_on|count == 0 else synced_lights_on }}
 
         - sequence: # @ignore: Missing property "condition"
           # alias: >-
@@ -327,19 +331,21 @@ action:
           logger: "{{ scene_name }}"
           message: "Ending {{ scene_name }}, dim down and eventually turn off {{ synced_lights }}."
       
+      - delay: 5 # Just to make sure parallel threads have ended
+
       - alias: "Calculate average brightness and set dim level"
         variables:
           brightness: >-
             {% set brightness = namespace(levels=[]) %}
             {% for light in synced_lights if is_state(light, 'on') %}
               {% if is_state_attr(light, 'color_mode', 'brightness') and state_attr(light, 'brightness')|int != 0 %}
-                {% set brightness.levels = brightness.levels + [ state_attr(light, 'brightness') ] %}
+                {% set brightness.levels = brightness.levels + [ state_attr(light, 'brightness')|float ] %}
               {% else %}
                 {% set brightness.levels = brightness.levels + [ 100 ] %}
               {% endif %}
             {% endfor %}
-            {{ 0.0 if brightness.levels|length == 0 else brightness.levels|sum / brightness.levels|length }}
-          dim_level: "{{ (brightness * dim_percentage)|int }}"
+            {{ 0.0 if brightness.levels|length == 0 else brightness.levels|average }}
+          dim_level: "{{ (brightness * dim_percentage)|round(2, 'ceil') }}"
 
       - service: system_log.write
         data:
@@ -349,7 +355,7 @@ action:
             Light avg-brightness is: {{ brightness }}, now dimming lights 
             with {{ (dim_percentage * 100)|int }}% to {{ dim_level }}.
       
-      - alias: "Dim lights to a low brightness to alert no motion"
+      - alias: "Dim lights to lower brightness to alert no motion"
         service: light.turn_on
         target:
           entity_id: >-

@@ -45,7 +45,7 @@ sequence:
               - service: group.set
                 data:
                   object_id: "{{ device_class_name }}"
-                  add_entities: "{{ devices }}"
+                  entities: "{{ devices }}"
               - repeat:
                   while: "{{ repeat.index <= num_areas }}"
                   sequence:
@@ -64,4 +64,4 @@ sequence:
                           - service: group.set
                             data:
                               object_id: "{{ area_group_name }}"
-                              add_entities: "{{ area_entities }}"
+                              entities: "{{ area_entities }}"

@@ -137,7 +137,8 @@ variables:
 sequence:
   - variables:
       device_name: "{{ input_notify_device.replace('notify.mobile_app_', '') }}"
-      ctx: "{{ context.id ~ '_' ~ device_name }}"
+      ctx_idx: "{{ state_attr(this.entity_id, 'current')|default(1, true) }}"
+      ctx: "{{ context.id ~ '_' ~ device_name ~ '_' ~ ctx_idx }}"
       device_id: >-
         {{ dict.from_keys(device_attr(device_id('device_tracker.' ~ device_name), 'identifiers')).mobile_app }}
 
@@ -242,6 +243,10 @@ sequence:
           {% endfor %}
         {% endfor %}
         {{ dict.from_keys(actions.handlers) }}
+  - service: system_log.write
+    data:
+      level: warning
+      message: "CONTEXT:{{ ctx }} \n\nID: {{ context.id }} == {{ this.context.id }} == {{ context.id == this.context.id }}\n\nDATA: {{update_data}}\n\n{{this}}"
 
   - alias: "Parallize event and action listeners"
     parallel:
