@@ -1,0 +1,35 @@
+# - alias: 'who turned on the light, the home assistant or the person?'
+#     description: ''
+#     trigger:
+#       - platform: state
+#         entity_id: light.inner_living_room_chandelier_light
+#     condition: []
+#     action:
+#       - choose:
+#           - conditions:
+#               - condition: template
+#                 value_template: '{{ trigger.to_state.context.user_id == none }}'
+#               - condition: template
+#                 value_template: '{{ trigger.to_state.context.parent_id == none }}'
+#             sequence:
+#               - service: notify.notify
+#                 data:
+#                   message: The light was turned physically
+#           - conditions:
+#               - condition: template
+#                 value_template: '{{ trigger.to_state.context.user_id == none }}'
+#             sequence:
+#               - service: notify.notify
+#                 data:
+#                   message: The light turned on the Home Assistant
+#         default: []
+#     mode: single
+
+blueprint:
+  domain: automation
+  name: Lights turned on by
+  description: >-
+    Was the light turned on by Home Assistant, or
+    someone/-thing else?
+trigger:
+  action: 
