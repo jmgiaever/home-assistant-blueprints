@@ -352,12 +352,15 @@ sequence:
                   if: "{{ not action }}"
                   then:
                     - stop: "Action is not associated with any scripts, ending."
-
+                - service: system_log.write
+                  data:
+                    level: warning
+                    message: "ACTION: {{ action }} "
                 - if: "{{ action is string or 'variables' not in action }}"
                   then:
                     service: script.turn_on
                     target:
-                      entity_id: "{{ script }}"
+                      entity_id: "{{ action.script }}"
                   else:
                     service: script.turn_on
                     target:
