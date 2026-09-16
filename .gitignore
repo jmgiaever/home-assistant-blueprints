@@ -9,3 +9,6 @@ Session.vim
 
 # local git worktrees
 .worktrees/
+
+# subagent-driven-development scratch (ledger, briefs, review packages)
+.superpowers/

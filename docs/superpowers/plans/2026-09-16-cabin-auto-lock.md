@@ -420,8 +420,16 @@ async def policy(hass: HomeAssistant, fake: FakeTTLock, hooks, notifications, cl
         )
         await hass.async_block_till_done()
         assert hass.states.get(AUTOMATION).state == "on"
+        # Re-register the notification mocks now: if HA loaded the real persistent_notification
+        # component while setting up automation, it replaced the handlers registered earlier.
+        notifications["create"] = async_mock_service(hass, "persistent_notification", "create")
+        notifications["dismiss"] = async_mock_service(hass, "persistent_notification", "dismiss")
         if grace:
             await clock(180)
+        # A safety-net tick during the grace may have relabelled the cabin; the documented
+        # scene after setup is 'vacant' (the door rules never read this helper).
+        await hass.services.async_call("input_select", "select_option", {"entity_id": STATE, "option": "vacant"}, blocking=True)
+        await hass.async_block_till_done()
         fake.reset_calls()
         for calls in hooks.values():
             calls.clear()
@@ -1777,9 +1785,10 @@ async def test_t9_passage_mode_suppresses_the_timer_until_the_window_ends(hass, 
 
 async def test_t13_start_grace_then_safety_net(hass, fake: FakeTTLock, policy, clock) -> None:
     await policy(grace=False)
-    fake.set_switch(on=False)                             # occupied before the restart
-    fake.set_lock_state("unlocked")
-    await set_helper(hass, dt_util.utcnow().timestamp() - 3600)   # H long past
+    fake.set_lock_state("unlocked")                       # occupied before the restart
+    fake.set_switch(on=False)
+    await hass.async_block_till_done()                    # the unlock trigger's own run (it pushes H) completes here
+    await set_helper(hass, dt_util.utcnow().timestamp() - 3600)   # ...and the restored helper says H is long past
     await hass.async_block_till_done()
     fake.reset_calls()
     await clock(110)
@@ -1996,9 +2005,9 @@ async def test_t11_auto_lock_outside_window_is_left_alone(hass, fake: FakeTTLock
 
 async def test_t11_no_unlock_when_auto_lock_is_still_armed(hass, fake: FakeTTLock, policy, clock) -> None:
     await policy()
-    fake.fail("ttlock.configure_autolock", times=2)      # occupy could not disarm
+    fake.fail("ttlock.configure_autolock", times=4)      # a physical unlock starts two runs, each tries twice
     fake.unlocked_by("unlock by fingerprint", "Joachim")
-    await clock(30, step=5)
+    await clock(60, step=5)
     assert hass.states.get(SWITCH).state == "on"
     fake.reset_calls()
     fake.auto_locked()
