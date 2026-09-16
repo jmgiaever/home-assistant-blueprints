@@ -98,7 +98,7 @@ def clock(hass: HomeAssistant, freezer):
             d = min(step, remaining)
             freezer.tick(timedelta(seconds=d))
             async_fire_time_changed(hass, dt_util.utcnow())
-            for _ in range(6):
+            for _ in range(20):
                 await asyncio.sleep(0)
             remaining -= d
 
@@ -114,10 +114,16 @@ async def set_helper(hass: HomeAssistant, ts: float) -> None:
 
 
 @pytest.fixture
-async def policy(hass: HomeAssistant, fake: FakeTTLock, hooks, notifications, clock):
+async def policy(hass: HomeAssistant, fake: FakeTTLock, hooks, notifications, clock, freezer):
     """Set up helpers + the blueprint automation. Scene after setup: VACANT, grace passed, calls cleared."""
 
     async def _setup(grace: bool = True, **overrides) -> None:
+        # Deterministic position in the 5-minute safety-net cycle: start at M0:30.123456 of the current
+        # 5-minute block (the frozen clock moves back by at most five minutes). The grace then ends at
+        # +3:00, the first safety-net tick lands at +4:30, and the non-zero microsecond keeps an explicit
+        # lock's H := now in the past for HA's whole-second time trigger.
+        now = dt_util.now()
+        freezer.move_to(now.replace(minute=(now.minute // 5) * 5, second=30, microsecond=123456))
         inputs = {**DEFAULT_INPUTS, **overrides}
         for entity in (KITCHEN, LIVING, BEDROOM):
             hass.states.async_set(entity, "off")
