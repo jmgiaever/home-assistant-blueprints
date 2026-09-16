@@ -50,12 +50,15 @@ for other automations (heating, lights) and for the dashboard; it is an output, 
 | State | On the lock | Label | Experience |
 |---|---|---|---|
 | **Occupied** | auto-lock **off** (`switch.*_auto_lock` = off) | `occupied` | every unlock stays unlocked; walk in and out freely. HA never unlocks the door by itself except R5 |
-| **Resting** | auto-lock **armed** at *S* seconds (default 30), bolt locked | `resting` | the household is here but quiet (in bed, or over at the main cabin with phones on the site Wi-Fi). The door is locked and a guest code re-locks itself. The next entry is a fingerprint or code, which returns to Occupied |
-| **Vacant** | auto-lock **armed**, bolt locked | `vacant` | nobody is here. On the lock this is identical to Resting |
+| **Resting** | per the instance's **resting policy**: bolt locked if `resting_lock_bolt`, auto-lock armed at *S_r* seconds if `resting_arm_auto_lock` (defaults: both on, *S_r* = 30) | `resting` | the household is here but quiet (in bed, or over at the main cabin with phones on the site Wi-Fi). With the defaults the door is locked and a guest code re-locks itself; the next entry is a fingerprint or code, which returns to Occupied |
+| **Vacant** | auto-lock **armed** at *S* seconds (default 30), bolt locked; not configurable | `vacant` | nobody is here |
 
-Resting and Vacant are the same on the lock and feel the same to the household (the next entry costs one credential
-either way). They differ only in the label, which is what presence and the bedroom sensor decide (§4.4). HA never
-unlocks a resting door on motion (D12): that keeps a PIR false trigger from opening the cabin.
+Policies only ever **strengthen** the lock (throw the bolt, arm auto-lock). Nothing in the blueprint disarms except R1
+on an unlock, and only R5 unlocks. Applying a policy is therefore idempotent and can be repeated at every refresh
+without memory: an explicit lock is never weakened when the label later flips to Resting, and a Resting policy of
+"leave the door alone" simply does nothing until the classification becomes Vacant. With the Hytta defaults, Resting
+and Vacant are identical on the lock and feel the same to the household (the next entry costs one credential either
+way). HA never unlocks a resting door on motion (D12): that keeps a PIR false trigger from opening the cabin.
 
 ### 4.2 Event classification
 
@@ -72,19 +75,22 @@ not new events.
 
 ### 4.3 Rules
 
-`vacate()` = lock the bolt if the lock is not `locked` → wait ≤ 10 s for `locked` → `configure_autolock(enabled: true, seconds: S)` → wait ≤ 10 s for the auto-lock switch to be `on` → on failure, one retry after 10 s (see §4.7) → on second failure, notify.
-`label(x)` = if the state helper is configured and its current option differs from `x`: `input_select.select_option(x)` and run the matching `on_<x>` hook; otherwise nothing.
+`vacate()` = lock the bolt if the lock is not `locked` → wait ≤ 10 s for `locked` → `configure_autolock(enabled: true, seconds: S)` unless the switch is already `on` with `seconds` = S → wait ≤ 10 s for the auto-lock switch to be `on` → on failure, one retry after 10 s (see §4.7) → on second failure, notify.
+`rest()` = the same with the resting policy: lock the bolt only if `resting_lock_bolt` and not `locked`; arm at *S_r* only if `resting_arm_auto_lock` and the switch is `off` (an already armed lock is never re-configured). Never disarms, never unlocks.
 `classify()` = `vacant` when no tracked person is `home` and every resting sensor is `off` and unchanged for at least M; `resting` otherwise.
+`apply(c)` = `vacate()` if `c` is `vacant`, else `rest()`.
+`label(x)` = if the state helper is configured and its current option differs from `x`: `input_select.select_option(x)` and run the matching `on_<x>` hook; otherwise nothing.
+`refresh_label()` = `label(occupied)` while `now < H`, otherwise `label(classify())`.
 
 Motion sensors come in two groups: **activity sensors** (living areas) push the timer; **resting sensors** (bedrooms) never push it and only take part in `classify()`.
 
 | # | Name | Triggers | Conditions | Actions |
 |---|---|---|---|---|
-| **R0** | Track activity | any **activity** motion sensor changes between `on` and `off` (resting sensors excluded); any tracked person changes between two known states | both old and new state are known (not `unavailable`/`unknown`/none), so boot-time and outage transitions never push *H* | motion: `H := max(H, now + M)`; person: `H := max(H, now + P)` |
+| **R0** | Track activity | any **activity** motion sensor changes between `on` and `off` (resting sensors excluded); any tracked person changes between two known states | both old and new state are known (not `unavailable`/`unknown`/none), so boot-time and outage transitions never push *H* | motion: `H := max(H, now + M)`; person: `H := max(H, now + P)`; `label(occupied)` |
 | **R1** | Occupy | last-trigger changes to an `UNLOCK` value; **or** the lock entity changes to `unlocked` from `locked`/`locking`/`unlocking` | trusted-operator list empty, or last-operator value is in it (trimmed, case-insensitive); a non-empty list without an operator sensor denies everything (README says so) | `H := max(H, now + M)`; if the auto-lock switch is `on` → `configure_autolock(enabled: false)`; `label(occupied)` |
-| **R2** | Vacate now | last-trigger changes to an `EXPLICIT_LOCK` value | — | `vacate()`; `label(classify())` |
-| **R3** | Settle + refresh label | time reaches *H*; passage sensor turns `off`; lock entity returns from `unavailable`; safety net every 5 min; HA start (+2 min grace) | — | **Settle** when `now ≥ H`, no activity sensor is `on`, passage sensor is not `on`, and the auto-lock switch is `off` **or** the lock is not `locked`: if the lock entity is `unavailable` → persistent notification "settle pending, lock unreachable" (re-evaluated when the lock returns and by the safety net), else `vacate()`. **Refresh** whenever the auto-lock switch is `on` afterwards: `label(classify())`, which flips `resting` ↔ `vacant` without touching the lock |
-| **R4** | Vacate at night | time equals the night time | night enabled; auto-lock switch `off` **or** lock not `locked` | `vacate()`; `label(classify())` (passage mode does **not** suppress this) |
+| **R2** | Vacate now | last-trigger changes to an `EXPLICIT_LOCK` value | — | `vacate()`; `H := now` (activity is over); `refresh_label()` |
+| **R3** | Settle + refresh label | time reaches *H*; passage sensor turns `off`; lock entity returns from `unavailable`; safety net every 5 min; HA start (+2 min grace) | — | **Settle** when `now ≥ H`, no activity sensor is `on` and the passage sensor is not `on`: if the lock entity is `unavailable` → persistent notification "settle pending, lock unreachable" (re-evaluated when the lock returns and by the safety net), else `apply(classify())` (idempotent: no call when nothing needs strengthening). Then always `refresh_label()` |
+| **R4** | Vacate at night | time equals the night time | night enabled | `vacate()` (idempotent); `refresh_label()` (passage mode does **not** suppress this) |
 | **R5** | Undo stale countdown | last-trigger changes to `AUTO_LOCK` | feature enabled; auto-lock switch is `off`; previous value was `UNLOCK` and changed < 90 s ago | `lock.unlock` once |
 
 Why R1 also listens to the lock entity: the last-trigger sensor emits no event when the same string repeats. After a
@@ -103,19 +109,22 @@ later of *last activity-sensor event + M* and *last presence event + P* (and *la
 with a monotonic `max`. Because both constraints only ever move forward in time, one value encodes both delays exactly.
 
 - The settle happens at *H* only if the live states agree (R3 conditions). If an activity sensor is still `on` at *H*,
-  its next `off` pushes *H* again and the time trigger re-arms. Presence does **not** block the settle; the door
-  locks and arms regardless of who is home.
-- Label at settle, and refreshed every 5 min while armed: `vacant` when no tracked person is `home` and every resting
-  sensor is `off` and unchanged for at least M (a sleeping person triggers a bedroom PIR rarely, so the last change,
-  not only the current state, counts); `resting` otherwise. The label therefore follows the phones and the bedroom in
-  both directions with at most 5 min lag, without touching the lock.
+  its next `off` pushes *H* again and the time trigger re-arms. Presence does **not** block the settle; it selects
+  which policy is applied (Resting or Vacant), and the Resting policy may be "leave the door alone".
+- Classification at settle, refreshed every 5 min: `vacant` when no tracked person is `home` and every resting sensor
+  is `off` and unchanged for at least M (a sleeping person triggers a bedroom PIR rarely, so the last change, not only
+  the current state, counts); `resting` otherwise. Each refresh re-applies the policy of the current class; because
+  policies only strengthen, a flip `resting` → `vacant` (phones gone, bedroom quiet) locks and arms within 5 min, and
+  a flip `vacant` → `resting` changes nothing on the lock.
+- Label: `occupied` while `now < H` (an unlock, activity or presence change within the delays), otherwise the current
+  class. R0 and R1 set it immediately; an explicit lock sets `H := now` so the label settles at once.
 - Defaults: M = 45 min (today's value), P = 20 min (longer than the few-minute Wi-Fi flaps seen in August).
 - No activity sensors configured → *H* is driven by presence changes and unlocks only (README warns that Wi-Fi presence
-  alone was blind for hours on 2026-08-21). No persons and no resting sensors → the label is always `vacant` when armed.
+  alone was blind for hours on 2026-08-21). No persons and no resting sensors → every settle is `vacant`.
 - `unavailable`/`unknown` sensors and persons count as *not active* (no motion / not home): a dead sensor fails towards
   **locked**, never towards an open door. After a restart a resting sensor's `last_changed` is the boot time, so for
-  up to M after a boot the label may read `resting` where `vacant` was due; the refresh corrects it and the door is
-  unaffected.
+  up to M after a boot the class may read `resting` where `vacant` was due; the refresh corrects it, and with the
+  default Resting policy the door is the same either way.
 - HA start: R3 waits 2 min (Z-Wave and UniFi settle) before evaluating. If *H* is already in the past and the
   conditions hold, the door settles then; otherwise the restored *H* fires at its original time.
 
@@ -133,9 +142,8 @@ configures passage mode; it only reads the passage-mode sensor (optional input).
 
 ### 4.6 Night
 
-Optional (default off). At the configured time, `vacate()` regardless of motion, presence or passage mode, and the
-label is refreshed (`resting` if someone is home, else `vacant`). The next morning the first fingerprint or code
-re-occupies (R1). There is deliberately no motion-based morning unlock: a PIR
+Optional (default off). At the configured time, `vacate()` regardless of motion, presence, passage mode or the
+Resting policy, and the label is refreshed. The next morning the first fingerprint or code re-occupies (R1). There is deliberately no motion-based morning unlock: a PIR
 false trigger would open an empty cabin.
 
 ### 4.7 Failure handling
@@ -182,6 +190,9 @@ refreshed within 5 min.
 10. **Evening in bed, phones invisible (the Aug 21 case).** As 9, but persons `not_home`; the bedroom changed at 22:35,
     less than M before 23:15 → label `resting`, not `vacant`. Had the bedroom been quiet for more than M as well →
     `vacant`. The door is locked + armed either way and the morning costs one fingerprint.
+11. **Another cabin, Resting policy off/off.** Settle at 13:45 with phones home → nothing on the lock (door stays
+    free), label `resting`. Phones leave 23:05 → H = 23:25 → class `vacant` → lock + arm at 23:25. Had the owner
+    locked by keypad at 21:00, `rest()` would never have disarmed it.
 
 ## 5. Blueprint interface
 
@@ -197,7 +208,10 @@ Grouped with blueprint input sections (HA ≥ 2024.6).
 | **Timers** — `vacancy_helper` | entity, domain `input_datetime` | required | must have date **and** time; README shows the 30-second creation |
 | `motion_delay` (M) | number 1–720 min | 45 | |
 | `presence_delay` (P) | number 1–720 min | 20 | |
-| `armed_seconds` (S) | number 1–60 s | 30 | value used when re-arming |
+| `armed_seconds` (S) | number 1–60 s | 30 | countdown used by `vacate()` |
+| **Resting policy** — `resting_lock_bolt` | boolean | true | throw the bolt when settling into Resting |
+| `resting_arm_auto_lock` | boolean | true | arm auto-lock when settling into Resting |
+| `resting_armed_seconds` (S_r) | number 1–60 s | 30 | countdown used when Resting arms; applied only when the switch is `off`, never re-configures an armed lock |
 | **Occupancy sources** — `motion_sensors` | entity, `binary_sensor`, device_class motion/occupancy, multiple | [] | activity sensors (living areas): push *H* |
 | `resting_sensors` | entity, `binary_sensor`, device_class motion/occupancy, multiple | [] | bedrooms: never push *H*; only used by `classify()` (label) |
 | `presence_entities` | entity, domains `person`, `device_tracker`, multiple | [] | `home` = present; pushes *H* by P and used by `classify()`; never keeps the door unlocked |
@@ -233,9 +247,11 @@ and is logged, and the door rules are unaffected.
 - R3's HA-start path: `trigger: homeassistant, event: start` → `delay: 00:02:00` → same condition block.
 - Every TTLock call uses `continue_on_error: true` and is followed by a `wait_template` on the observable state.
 - The blueprint contains no entity ids, names or site specifics; everything comes from inputs.
-- The label is a projection: `classify()` is computed from live states, compared with the helper's current option, and
-  only written (with its hook) on change. The door rules never read the helper, so it can be deleted, renamed or
-  edited by hand without affecting the lock.
+- The label is a projection: `occupied` while `now < H`, otherwise `classify()` from live states; compared with the
+  helper's current option and only written (with its hook) on change. The door rules never read the helper, so it can
+  be deleted, renamed or edited by hand without affecting the lock.
+- Policy application is strengthen-only and idempotent: `rest()` and `vacate()` skip every call whose target state
+  already holds, so the 5-minute refresh normally makes no cloud call at all.
 
 ## 7. Repository, tests, CI
 
@@ -257,15 +273,19 @@ and is logged, and the door rules are unaffected.
   passage; T11 R5 inside/outside the window and only when auto-lock is off; T12 retry guard and notification; T13 HA
   start grace and restored H; T14 no self-trigger on HA's own lock/unlock; T15 stale values from `unavailable` ignored;
   T16 boot/outage transitions (`unknown`/`unavailable` ↔ known) neither push H nor occupy; T17 lock unavailable at H →
-  notification, then vacate when the lock returns; T18 settle always locks + arms, whoever is home; T19 label `resting`
+  notification, then vacate when the lock returns; T18 settle with the default policy locks + arms whoever is home; T19 label `resting`
   when a person is home or a resting sensor changed within M, `vacant` otherwise, and the matching hook runs exactly
   once; T20 label flips `resting` ↔ `vacant` on the safety net with no lock call; T21 no state helper configured → no
   label writes, no hooks, door unchanged; T22 resting sensors never push H; T23 the door rules never read the state
-  helper (a wrong or missing option changes nothing on the lock).
+  helper (a wrong or missing option changes nothing on the lock); T24 each of the four Resting policy combinations
+  makes exactly the expected calls and nothing else; T25 an explicit lock (armed at S) is never weakened by a later
+  Resting refresh, with `resting_arm_auto_lock` off or with S_r ≠ S; T26 Resting arms at S_r only when the switch is
+  `off`; T27 the label is `occupied` while now < H, and an explicit lock sets H := now.
 - Mutation pass before whole-branch review, each must turn at least one test red: drop the `now ≥ H` check; drop the
   `Auto Lock` exclusion; drop the passage gate; replace `max` with assignment in R0; remove the lock-entity trigger
   from R1; remove the retry guard; swap the `resting`/`vacant` classification; count resting sensors as activity; make
-  a door rule depend on the state helper.
+  a door rule depend on the state helper; let `rest()` disarm or re-configure an armed lock; ignore
+  `resting_lock_bolt`; drop `H := now` in R2.
 
 ## 8. Deployment to Hytta and acceptance
 
@@ -280,7 +300,7 @@ Deploy over the persistent SSH master; config lives in the docker volume
    `switch.joachim_cabin_auto_lock`, `sensor.joachim_cabin_last_operator`, `binary_sensor.joachim_cabin_passage_mode`,
    activity motion = kitchen + living room, resting = bedroom (`binary_sensor.bedroom_motion_sensor_motion_detection`),
    presence = `person.lav918` + `person.lukas_alexander`, state helper `input_select.hytta_state`, no hooks yet,
-   M = 45, P = 20, S = 30, night off, R5 on.
+   Resting policy lock + arm with S_r = 30, M = 45, P = 20, S = 30, night off, R5 on.
 4. Back up `automations.yaml`, remove "Turn back on auto-lock" (it duplicates the settle rule with a restart-fragile
    timer and would race it), `automation.reload`, confirm both changes in the UI.
 5. Acceptance with M temporarily 2 min and P 1 min, all timestamps from the HA logbook/trace:
@@ -303,7 +323,7 @@ Tip for the household, outside this design: enrolling Lukas's fingerprint makes 
 | D1 | Occupancy begins with a successful **unlock event**, not with phone presence | Lock events are reliable and instant; Wi-Fi presence was blind for 8 h on 2026-08-21; no door is ever opened by a false "home" |
 | D2 | **Anyone** who unlocks counts; a trusted-operator list is an optional input | Family site, guests get the same convenience (user choice); the input keeps the blueprint reusable for stricter cabins |
 | D3 | The **lock's auto-lock setting is the door state**; the door rules read no helper | Restart-safe, visible in the existing switch and in Google Home, and every action is idempotent so double fires are harmless |
-| D4 | The timer settles the door (lock + arm) M after the last living-area motion (and P after the last presence change), whoever is home | A quiet evening in bed must lock the door even with phones on the Wi-Fi, and arming while resting re-locks a night-time guest entry; presence and the bedroom therefore decide only the label |
+| D4 | The timer settles the door M after the last living-area motion (and P after the last presence change); presence and the bedroom select the policy: Vacant = lock + arm (fixed), Resting = per instance (Hytta: lock + arm) | A quiet evening in bed must lock Hytta even with phones on the Wi-Fi, while another cabin may prefer the door left free while the household is around; one blueprint serves both |
 | D5 | An explicit lock beats every timer | A deliberate gesture at the keypad, app, dashboard or Google Home is the clearest "we are leaving" |
 | D6 | Night lock optional, default off, beats passage mode, no morning motion-unlock | Household security wins over guest hours; a PIR false trigger must never open an empty cabin; one credential per morning is the accepted cost |
 | D7 | Timers survive restarts through one **required** `input_datetime` helper holding "vacancy not before" as a monotonic max | User asked for restart-proof timers; a single value encodes both delays; one code path is easier to test than helper-or-fallback |
@@ -319,9 +339,12 @@ Tip for the household, outside this design: enrolling Lukas's fingerprint makes 
 | D17 | The old "Turn back on auto-lock" automation is removed (backed up) at deploy | It duplicates the settle rule with a restart-fragile `for:` timer and would race it |
 | D18 | Notification hook is an `action` selector | Lets each instance choose TTS, a script or nothing without the blueprint knowing about notify platforms |
 | D19 | Classification by string patterns with explicit exclusions rather than an allow-list of exact strings | New firmware strings of the same shape (e.g. new unlock methods) keep working; exclusions are the dangerous cases and are enumerated |
-| D20 | Resting and Vacant are identical on the lock (armed + locked); the distinction is a label in an optional `input_select`, written on change with `on_<state>` hooks, never read by the door rules | The user wants the cabin's occupancy classification available to other automations (heating, lights); keeping it an output means a helper can never make the door drift |
-| D21 | Resting sensors (bedrooms) never push the timer and take part only in the label, as presence for M after their last change; no unlock on motion | Bedroom motion means people are in bed, not active; unlocking on motion was rejected because a PIR false trigger could open the cabin while the family is at the main cabin with phones on the site Wi-Fi |
+| D20 | The occupancy classification is exposed as a label in an optional `input_select`, written on change with `on_<state>` hooks, never read by the door rules; `occupied` = activity within the delays, otherwise the class | The user wants the classification available to other automations (heating, lights); keeping it an output means a helper can never make the door drift |
+| D21 | Resting sensors (bedrooms) never push the timer and take part only in the classification (label and policy choice), as presence for M after their last change; no unlock on motion | Bedroom motion means people are in bed, not active; unlocking on motion was rejected because a PIR false trigger could open the cabin while the family is at the main cabin with phones on the site Wi-Fi |
 | D22 | Waits of 10 s, one retry after 10 s, `mode: queued` with `max: 100`, a 5-minute safety-net trigger | Keeps the worst-case run near one minute so a queued occupy is never far behind, never drops a motion burst, and guarantees an overdue settle is retried without depending on the time trigger re-arming |
+| D23 | Policies only strengthen (bolt, arm); only R1 disarms and only R5 unlocks; `rest()` never re-configures an armed lock | Makes every policy application idempotent and memory-free, so the 5-minute refresh is safe, an explicit lock can never be weakened by presence, and a wrong classification fails towards locked |
+| D24 | Resting policy is per instance: `resting_lock_bolt`, `resting_arm_auto_lock`, `resting_armed_seconds`; Vacant is fixed | User asked for Resting to be adjustable (locking action, auto-lock mode, countdown) so other cabins can keep the door free while the household is around; Vacant has one sensible meaning |
+| D25 | An explicit lock sets `H := now` | "We are leaving" ends the activity window, so the label settles immediately instead of flapping until the timer expires |
 
 ## 10. To verify on the device during acceptance
 
