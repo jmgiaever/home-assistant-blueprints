@@ -51,6 +51,7 @@
 - `await clock(seconds, step=60)` advances fake time and fires HA timers. Use `step=10` (or less) in tests that exercise the 10-second waits. `clock()` never waits for run tasks; a run parked in a `wait_template`/`delay` resumes on the next tick. Call `await hass.async_block_till_done()` only after an event whose run cannot be waiting on a timer (a healthy fake answers every command at once), never while a failure is being retried.
 - HA's `homeassistant: start` trigger does **not** fire in tests (hass is already running when the automation is set up); the start grace is exercised through `this.last_changed` (T13).
 - Fake-time: `time.monotonic` is frozen too, so `delay`/`wait_template` timeouts are advanced by `clock()`, never by real waiting.
+- The harness runs Home Assistant in time zone **US/Pacific** (`dt_util.DEFAULT_TIME_ZONE`); `time` triggers such as the night time are local, so tests that depend on wall-clock times freeze to a local datetime, never to a `+00:00` string.
 
 ---
 
@@ -1892,7 +1893,10 @@ git commit -m "feat(cabin-auto-lock): settle on the vacancy timer with resting/v
 ```python
 """T10 night beats motion, presence and passage mode; off by default."""
 
+from datetime import datetime
+
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from .conftest import KITCHEN
 from .fakes import LOCK, FakeTTLock
@@ -1912,7 +1916,7 @@ async def busy_evening(hass: HomeAssistant, fake: FakeTTLock) -> None:
 
 
 async def test_t10_night_vacates_despite_everything(hass, fake: FakeTTLock, policy, clock, freezer) -> None:
-    freezer.move_to("2026-09-16 22:50:00+00:00")     # before setup, so the 23:00 trigger is scheduled for tonight
+    freezer.move_to(datetime(2026, 9, 16, 22, 50, tzinfo=dt_util.DEFAULT_TIME_ZONE))   # 22:50 LOCAL (the harness zone is US/Pacific), before setup
     await policy(night_enabled=True, night_time="23:00:00")   # setup + 3 min grace -> 22:53
     await busy_evening(hass, fake)
     await clock(8 * 60, step=30)                     # crosses 23:00
@@ -1920,7 +1924,7 @@ async def test_t10_night_vacates_despite_everything(hass, fake: FakeTTLock, poli
 
 
 async def test_t10_night_is_off_by_default(hass, fake: FakeTTLock, policy, clock, freezer) -> None:
-    freezer.move_to("2026-09-16 22:50:00+00:00")
+    freezer.move_to(datetime(2026, 9, 16, 22, 50, tzinfo=dt_util.DEFAULT_TIME_ZONE))
     await policy()
     await busy_evening(hass, fake)
     await clock(8 * 60, step=30)
