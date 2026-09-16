@@ -329,6 +329,7 @@ variables:
   h_ts: "{{ state_attr(vacancy_helper, 'timestamp') | float(0) }}"
   helper_ok: "{{ state_attr(vacancy_helper, 'timestamp') is not none }}"
   now_ts: "{{ now().timestamp() }}"
+  event_marker: "{{ expand(last_trigger_sensor) | map(attribute='last_changed') | map('string') | first | default('') }}"
   # -- live facts (Task 6) --
 
 actions:
@@ -373,8 +374,134 @@ actions:
             data:
               enabled: false
             continue_on_error: true
-  # ---- policy selection (R2, R3, R4) — Task 5, 6, 7 ----
-  # ---- explicit lock ends activity (R2) — Task 5 ----
-  # ---- apply policy — Task 5 ----
+  # ---- policy selection (R2, R3, R4) ----
+  - variables:
+      policy: >-
+        {%- if trigger.id == 'lock_event' and is_explicit_lock and event_is_fresh -%}vacant
+        {%- else -%}none{%- endif -%}
+  # ---- explicit lock ends activity (R2) ----
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'lock_event' and is_explicit_lock and event_is_fresh and h_ts > now_ts }}"
+    then:
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: "{{ vacancy_helper }}"
+        data:
+          timestamp: "{{ now_ts }}"
+  # ---- apply policy (strengthen-only, idempotent, guarded retry) ----
+  - if:
+      - condition: template
+        value_template: "{{ policy != 'none' }}"
+    then:
+      - variables:
+          want_lock: "{{ policy == 'vacant' or resting_lock_bolt }}"
+          want_arm: "{{ policy == 'vacant' or resting_arm_auto_lock }}"
+          want_seconds: "{{ (armed_seconds if policy == 'vacant' else resting_armed_seconds) | int }}"
+          switch_seconds: "{{ state_attr(auto_lock_switch, 'seconds') | int(0) }}"
+          need_lock: "{{ want_lock and not is_state(lock_entity, 'locked') }}"
+          need_arm: >-
+            {{ want_arm and (is_state(auto_lock_switch, 'off')
+               or (policy == 'vacant' and is_state(auto_lock_switch, 'on') and switch_seconds != want_seconds)) }}
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ (need_lock or need_arm) and is_state(lock_entity, 'unavailable') }}"
+            sequence:
+              - action: persistent_notification.create
+                data:
+                  notification_id: "{{ notification_id }}"
+                  title: "Cabin auto-lock: settle pending"
+                  message: "{{ lock_entity }} is unreachable. The door will be secured as soon as the lock is back."
+          - conditions:
+              - condition: template
+                value_template: "{{ need_lock or need_arm }}"
+            sequence:
+              - if:
+                  - condition: template
+                    value_template: "{{ need_lock }}"
+                then:
+                  - action: lock.lock
+                    target:
+                      entity_id: "{{ lock_entity }}"
+                    continue_on_error: true
+                  - wait_template: "{{ is_state(lock_entity, 'locked') }}"
+                    timeout: "00:00:10"
+                    continue_on_timeout: true
+                  - if:
+                      - condition: template
+                        value_template: "{{ not wait.completed }}"
+                    then:
+                      - delay: "00:00:10"
+                      # retry only if no newer lock event arrived during the wait and the pause
+                      - if:
+                          - condition: template
+                            value_template: "{{ (expand(last_trigger_sensor) | map(attribute='last_changed') | map('string') | first | default('')) == event_marker }}"
+                        then:
+                          - action: lock.lock
+                            target:
+                              entity_id: "{{ lock_entity }}"
+                            continue_on_error: true
+                          - wait_template: "{{ is_state(lock_entity, 'locked') }}"
+                            timeout: "00:00:10"
+                            continue_on_timeout: true
+              - if:
+                  - condition: template
+                    value_template: "{{ need_arm }}"
+                then:
+                  - action: ttlock.configure_autolock
+                    target:
+                      entity_id: "{{ lock_entity }}"
+                    data:
+                      enabled: true
+                      seconds: "{{ want_seconds }}"
+                    continue_on_error: true
+                  - wait_template: "{{ is_state(auto_lock_switch, 'on') }}"
+                    timeout: "00:00:10"
+                    continue_on_timeout: true
+                  - if:
+                      - condition: template
+                        value_template: "{{ not wait.completed }}"
+                    then:
+                      - delay: "00:00:10"
+                      - if:
+                          - condition: template
+                            value_template: "{{ (expand(last_trigger_sensor) | map(attribute='last_changed') | map('string') | first | default('')) == event_marker }}"
+                        then:
+                          - action: ttlock.configure_autolock
+                            target:
+                              entity_id: "{{ lock_entity }}"
+                            data:
+                              enabled: true
+                              seconds: "{{ want_seconds }}"
+                            continue_on_error: true
+                          - wait_template: "{{ is_state(auto_lock_switch, 'on') }}"
+                            timeout: "00:00:10"
+                            continue_on_timeout: true
+              - variables:
+                  superseded: "{{ (expand(last_trigger_sensor) | map(attribute='last_changed') | map('string') | first | default('')) != event_marker }}"
+                  secure_failed: >-
+                    {{ not superseded and ((need_lock and not is_state(lock_entity, 'locked'))
+                       or (need_arm and not is_state(auto_lock_switch, 'on'))) }}
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ secure_failed }}"
+                    sequence:
+                      - action: persistent_notification.create
+                        data:
+                          notification_id: "{{ notification_id }}"
+                          title: "Cabin auto-lock: could not secure the door"
+                          message: >-
+                            {{ lock_entity }} could not be {{ 'locked' if need_lock else 'armed' }} after two attempts.
+                            Check the TTLock gateway and cloud.
+                      - sequence: !input notify_actions
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ not superseded }}"
+                    sequence:
+                      - action: persistent_notification.dismiss
+                        data:
+                          notification_id: "{{ notification_id }}"
   # ---- stale countdown (R5) — Task 8 ----
   # ---- label — Task 9 ----
