@@ -6,3 +6,6 @@ Session.vim
 .netrwhist
 *~
 
+
+# local git worktrees
+.worktrees/
