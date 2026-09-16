@@ -21,7 +21,7 @@
 - The door rules never read the state helper; it is written only (D20).
 - Automation: `mode: queued`, `max: 100`, `max_exceeded: silent` (D22). Waits 10 s, one retry after 10 s, guarded by "no newer lock event" (§4.7).
 - Start-up grace: settles require `(now() - as_datetime(this.last_changed)).total_seconds() >= 120` (§4.4/§6 as amended). No `delay` in the run.
-- Every rule requires `trigger.from_state` to exist for state triggers (entity-added events are not events, §6).
+- Every rule requires both `trigger.from_state` and `trigger.to_state` to exist for state triggers (entity-added and entity-removed events are not events, §6); the presence trigger keeps `not_from`/`not_to`, never an allow-list of states, because persons can be in named zones.
 - License GPL-3.0 (repo's), branch `master`, commits in the form `feat(cabin-auto-lock): …` / `test(cabin-auto-lock): …` / `docs: …`.
 - Never commit secrets. The cabin's config directory is `/var/snap/docker/common/var-lib-docker/volumes/homeassistant-config/_data`; the Pi host has no `python3`, use `docker exec -i homeassistant python3 -`.
 - Git: work in a worktree on branch `feat/cabin-auto-lock` (created with superpowers:using-git-worktrees). Do not push to `master`; the user merges out.
@@ -862,7 +862,7 @@ git commit -m "test(cabin-auto-lock): real-HA test harness, fake TTLock, bluepri
 ### Task 2: Event classification and R1 occupy (string trigger)
 
 **Files:**
-- Modify: `automation/cabin_auto_lock.yaml` (variables + `occupy` block; delete the `logbook.log` stand-in)
+- Modify: `automation/cabin_auto_lock.yaml` (variables + `occupy` block; delete the `- variables: skeleton: true` stand-in)
 - Test: `tests/test_01_classification.py`
 
 **Interfaces:**
@@ -951,14 +951,14 @@ async def test_t16_entity_added_is_not_an_event(hass: HomeAssistant, fake: FakeT
 - [ ] **Step 2: Run to see them fail**
 
 Run: `uv run pytest tests/test_01_classification.py -q`
-Expected: the UNLOCK cases of T1, the case-insensitivity test and the "Lukas" half of T3 FAIL (no `configure_autolock` call); the rest pass vacuously.
+Expected: the 13 UNLOCK cases of T1 (of 42 parametrized events), the case-insensitivity test and the "Lukas" half of T3 FAIL (no `configure_autolock` call); the rest pass vacuously.
 
 - [ ] **Step 3: Add the classification variables and the occupy block**
 
 In `variables:`, replace the line `# -- classification (Task 2) --` with:
 
 ```yaml
-  event_is_fresh: "{{ (trigger.from_state is not none) if trigger.from_state is defined else true }}"
+  event_is_fresh: "{{ (trigger.from_state is not none and trigger.to_state is not none) if trigger.from_state is defined else true }}"
   event_value: >-
     {{ (trigger.to_state.state | lower) if (trigger.id == 'lock_event' and trigger.to_state is not none) else '' }}
   previous_value: >-
@@ -1009,7 +1009,7 @@ Note the `unlock_state` half of `occupy_requested` is already present; Task 4 on
 - [ ] **Step 4: Run to see them pass**
 
 Run: `uv run pytest tests/test_01_classification.py tests/test_00_harness.py -q`
-Expected: all pass (`44 passed` or similar: 40 parametrized + 6 + 2). If a parametrized case for `"Lock with QR code failed, the lock is double locked"` occupies, the `match` regex lost its anchor.
+Expected: all pass (`50 passed`: 42 parametrized + 6 + 2 harness). If a parametrized case for `"Lock with QR code failed, the lock is double locked"` occupies, the `match` regex lost its anchor.
 
 - [ ] **Step 5: Commit**
 
@@ -2693,7 +2693,7 @@ variables:
   stale_countdown_window: !input stale_countdown_window
   state_select: !input state_select
   notification_id: "cabin_auto_lock_{{ lock_entity | replace('.', '_') }}"
-  event_is_fresh: "{{ (trigger.from_state is not none) if trigger.from_state is defined else true }}"
+  event_is_fresh: "{{ (trigger.from_state is not none and trigger.to_state is not none) if trigger.from_state is defined else true }}"
   event_value: >-
     {{ (trigger.to_state.state | lower) if (trigger.id == 'lock_event' and trigger.to_state is not none) else '' }}
   previous_value: >-
