@@ -530,4 +530,29 @@ actions:
         target:
           entity_id: "{{ lock_entity }}"
         continue_on_error: true
-  # ---- label — Task 9 ----
+  # ---- label (projection; never read by the door rules) ----
+  - if:
+      - condition: template
+        value_template: "{{ state_select != '' }}"
+    then:
+      - variables:
+          label: >-
+            {%- set h = state_attr(vacancy_helper, 'timestamp') | float(0) -%}
+            {{ 'occupied' if now().timestamp() < h else ('resting' if (persons_home or resting_recent) else 'vacant') }}
+      - if:
+          - condition: template
+            value_template: "{{ not is_state(state_select, label) }}"
+        then:
+          - action: input_select.select_option
+            target:
+              entity_id: "{{ state_select }}"
+            data:
+              option: "{{ label }}"
+            continue_on_error: true
+          - choose:
+              - conditions: "{{ label == 'occupied' }}"
+                sequence: !input on_occupied
+              - conditions: "{{ label == 'resting' }}"
+                sequence: !input on_resting
+              - conditions: "{{ label == 'vacant' }}"
+                sequence: !input on_vacant
