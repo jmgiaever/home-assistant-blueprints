@@ -394,6 +394,7 @@ actions:
   - variables:
       policy: >-
         {%- if trigger.id == 'lock_event' and is_explicit_lock and event_is_fresh -%}vacant
+        {%- elif trigger.id == 'night' and night_enabled -%}vacant
         {%- elif settle_due -%}{{ classification }}
         {%- else -%}none{%- endif -%}
   # ---- explicit lock ends activity (R2) ----
