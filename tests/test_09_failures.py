@@ -69,3 +69,30 @@ async def test_t12_occupy_failure_is_retried_without_notification(hass: HomeAssi
     assert len(fake.calls_of("ttlock.configure_autolock")) == 2
     assert hass.states.get(SWITCH).state == "off"
     assert notifications["create"] == []
+
+
+async def test_t12_stale_notification_is_dismissed_when_the_door_heals_out_of_band(hass: HomeAssistant, fake: FakeTTLock, policy, clock, notifications) -> None:
+    await policy()
+    await occupied(hass, fake)
+    fake.fail("lock.lock", times=2)
+    fake.event("lock by lock key")
+    await clock(40, step=5)
+    assert len(notifications["create"]) == 1                # could not secure the door
+    assert hass.states.get(SWITCH).state == "on"           # the arm step succeeded
+    fake.set_lock_state("locked")                          # someone locked it by hand
+    fake.reset_calls()
+    fake.event("lock by app")                              # the echo / next explicit lock: nothing left to do
+    await hass.async_block_till_done()
+    assert fake.calls == []
+    assert [c.data["notification_id"] for c in notifications["dismiss"]] == ["cabin_auto_lock_lock_hytta"]
+
+
+async def test_t17_unavailable_switch_posts_settle_pending_and_makes_no_call(hass: HomeAssistant, fake: FakeTTLock, policy, notifications) -> None:
+    await policy()
+    await occupied(hass, fake)
+    hass.states.async_set(SWITCH, "unavailable")
+    await hass.async_block_till_done()
+    fake.event("lock by lock key")
+    await hass.async_block_till_done()
+    assert fake.calls == []
+    assert notifications["create"][0].data["title"] == "Cabin auto-lock: settle pending"
