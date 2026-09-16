@@ -1,9 +1,6 @@
 """The optional input_select label: written on change with hooks, never read by the door rules."""
 
-from homeassistant.core import HomeAssistant
-from homeassistant.util import dt as dt_util
-
-from .conftest import JOACHIM, KITCHEN, STATE, set_helper
+from .conftest import JOACHIM, KITCHEN, STATE
 from .fakes import LOCK, FakeTTLock
 
 MIN = 60

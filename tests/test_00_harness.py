@@ -17,6 +17,15 @@ async def test_blueprint_loads_and_scene_is_vacant(hass: HomeAssistant, fake: Fa
     assert fake.calls == []
 
 
+async def test_all_defaults_configuration_loads_and_occupies(hass: HomeAssistant, fake: FakeTTLock, policy) -> None:
+    await policy(last_operator_sensor="", passage_mode_sensor="", motion_sensors=[], resting_sensors=[],
+                 presence_entities=[], trusted_operators=[], notify_actions=[], state_select="",
+                 on_occupied=[], on_resting=[], on_vacant=[])
+    fake.event("unlock by fingerprint", operator="Joachim")
+    await hass.async_block_till_done()
+    assert fake.calls_of("ttlock.configure_autolock") == [{"entity_id": [LOCK], "enabled": False}]
+
+
 async def test_fake_lock_mirrors_commands(hass: HomeAssistant, fake: FakeTTLock) -> None:
     await hass.services.async_call("lock", "unlock", {"entity_id": LOCK}, blocking=True)
     assert hass.states.get(LOCK).state == "unlocked"

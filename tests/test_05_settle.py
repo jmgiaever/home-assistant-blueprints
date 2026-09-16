@@ -1,11 +1,15 @@
 """R3: the timer settles the door; presence and the bedroom pick the policy; nothing ever weakens the lock."""
 
+import asyncio
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import async_fire_time_changed_exact
 
 from .conftest import BEDROOM, JOACHIM, KITCHEN, LIVING, LUKAS, helper_ts, set_helper
-from .fakes import LOCK, PASSAGE, SWITCH, FakeTTLock
+from .fakes import LOCK, SWITCH, FakeTTLock
 
 MIN = 60
 VACATE = [("lock.lock", {"entity_id": [LOCK]}),
@@ -22,6 +26,21 @@ async def occupied_with_motion(hass: HomeAssistant, fake: FakeTTLock) -> float:
     await hass.async_block_till_done()
     fake.reset_calls()
     return dt_util.utcnow().timestamp()
+
+
+async def test_t6_settle_fires_on_the_time_trigger_at_a_fractional_start(hass, fake: FakeTTLock, policy, freezer) -> None:
+    """Production-faithful: the time trigger fires at floor(H); settle_due must be true at that instant (final review I1)."""
+    await policy()
+    freezer.tick(timedelta(microseconds=654321))           # an arbitrary sub-second phase
+    await occupied_with_motion(hass, fake)
+    h = helper_ts(hass)
+    assert h == int(h)
+    freezer.move_to(datetime.fromtimestamp(h, tz=timezone.utc) + timedelta(milliseconds=2))
+    async_fire_time_changed_exact(hass, dt_util.utcnow())
+    for _ in range(20):
+        await asyncio.sleep(0)
+    await hass.async_block_till_done()
+    assert fake.calls == VACATE
 
 
 async def test_t6_settles_at_h_and_not_before(hass: HomeAssistant, fake: FakeTTLock, policy, clock) -> None:

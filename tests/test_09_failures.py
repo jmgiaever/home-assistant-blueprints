@@ -87,6 +87,40 @@ async def test_t12_stale_notification_is_dismissed_when_the_door_heals_out_of_ba
     assert [c.data["notification_id"] for c in notifications["dismiss"]] == ["cabin_auto_lock_lock_hytta"]
 
 
+async def test_t12_safety_net_retries_an_unsecured_door(hass, fake: FakeTTLock, policy, clock, notifications) -> None:
+    await policy()
+    await occupied(hass, fake)
+    fake.fail("lock.lock", times=2)
+    fake.event("lock by lock key")
+    await clock(40, step=5)
+    assert len(fake.calls_of("lock.lock")) == 2
+    assert len(notifications["create"]) == 1
+    await clock(3 * 60)                                    # crosses the next 5-minute safety-net tick, not the one after
+    assert len(fake.calls_of("lock.lock")) == 3
+    assert hass.states.get(LOCK).state == "locked"
+    assert [c.data["notification_id"] for c in notifications["dismiss"]] == ["cabin_auto_lock_lock_hytta"]
+
+
+async def test_t12_a_queued_settle_never_bolts_a_door_unlocked_meanwhile(hass, fake: FakeTTLock, policy, clock) -> None:
+    """A settle queued behind a slow vacate must not act on a stale snapshot (final review I4)."""
+    await policy()
+    fake.set_passage(True)                                 # keeps the timer from settling on its own
+    await hass.async_block_till_done()
+    await occupied(hass, fake)
+    fake.fail("lock.lock", times=2)
+    fake.event("lock by lock key")                        # run A: vacate, parked on its waits
+    await clock(5, step=5)
+    fake.set_passage(False)                                # run B (passage_off settle) queued behind A
+    await clock(10, step=5)
+    fake.unlocked_by("unlock by fingerprint", "Joachim")  # the household comes back while A is still parked
+    await clock(40, step=5)
+    assert hass.states.get(LOCK).state == "unlocked"
+    # The newer event supersedes both A's own retry (the pre-existing guard: D10) and B's whole
+    # settle (this fix): exactly one lock.lock call is ever made.
+    assert len(fake.calls_of("lock.lock")) == 1
+    assert hass.states.get(SWITCH).state == "off"
+
+
 async def test_t17_unavailable_switch_posts_settle_pending_and_makes_no_call(hass: HomeAssistant, fake: FakeTTLock, policy, notifications) -> None:
     await policy()
     await occupied(hass, fake)
@@ -95,4 +129,5 @@ async def test_t17_unavailable_switch_posts_settle_pending_and_makes_no_call(has
     fake.event("lock by lock key")
     await hass.async_block_till_done()
     assert fake.calls == []
+    assert len(notifications["create"]) == 1
     assert notifications["create"][0].data["title"] == "Cabin auto-lock: settle pending"

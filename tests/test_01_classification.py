@@ -3,7 +3,8 @@
 import pytest
 from homeassistant.core import HomeAssistant
 
-from .fakes import LOCK, OPERATOR, SWITCH, TRIGGER, FakeTTLock
+from .conftest import helper_ts
+from .fakes import LOCK, SWITCH, TRIGGER, FakeTTLock
 from .ttlock_events import EVENTS, expected_class
 
 
@@ -40,12 +41,15 @@ async def test_t1_repeated_unlock_while_occupied_makes_no_call(hass: HomeAssista
 
 async def test_t3_trusted_list_denies_guest(hass: HomeAssistant, fake: FakeTTLock, policy) -> None:
     await policy(trusted_operators=["Joachim", " lukas "])
+    before = helper_ts(hass)
     fake.event("unlock by passcode", operator="Magnus")
     await hass.async_block_till_done()
     assert fake.calls == []
+    assert helper_ts(hass) == before
     fake.event("unlock by fingerprint", operator="Lukas")
     await hass.async_block_till_done()
     assert len(fake.calls_of("ttlock.configure_autolock")) == 1
+    assert helper_ts(hass) > before
 
 
 async def test_t3_trusted_list_without_operator_sensor_denies_everyone(hass: HomeAssistant, fake: FakeTTLock, policy) -> None:

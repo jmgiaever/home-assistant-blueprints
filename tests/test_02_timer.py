@@ -18,6 +18,17 @@ async def test_t5_motion_pushes_by_m(hass: HomeAssistant, fake: FakeTTLock, poli
     assert helper_ts(hass) == pytest.approx(t0 + 45 * MIN, abs=1)
 
 
+async def test_t5_pushes_are_whole_seconds(hass: HomeAssistant, fake: FakeTTLock, policy) -> None:
+    """HA's time trigger fires on whole-second attributes, so H must be a whole second (final review I1)."""
+    await policy()
+    t0 = dt_util.utcnow().timestamp()
+    hass.states.async_set(KITCHEN, "on")
+    await hass.async_block_till_done()
+    h = helper_ts(hass)
+    assert h == int(h)
+    assert t0 + 45 * MIN <= h < t0 + 45 * MIN + 1
+
+
 async def test_t5_helper_is_monotonic_max(hass: HomeAssistant, fake: FakeTTLock, policy, clock) -> None:
     await policy()
     t0 = dt_util.utcnow().timestamp()
