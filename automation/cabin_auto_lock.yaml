@@ -259,8 +259,8 @@ triggers:
   - id: activity_presence
     trigger: state
     entity_id: !input presence_entities
+    to: ["home", "not_home"]
     not_from: ["unavailable", "unknown"]
-    not_to: ["unavailable", "unknown"]
   - id: lock_event
     trigger: state
     entity_id: !input last_trigger_sensor
@@ -326,10 +326,28 @@ variables:
     {{ (trusted_operators | count == 0)
        or (last_operator_sensor != ''
            and (states(last_operator_sensor) | lower | trim) in (trusted_operators | map('lower') | map('trim') | list)) }}
-  # -- live facts (Task 3, Task 6) --
+  h_ts: "{{ state_attr(vacancy_helper, 'timestamp') | float(0) }}"
+  helper_ok: "{{ state_attr(vacancy_helper, 'timestamp') is not none }}"
+  now_ts: "{{ now().timestamp() }}"
+  # -- live facts (Task 6) --
 
 actions:
-  # ---- timer push (R0, R1) — Task 3 ----
+  # ---- timer push (R0, R1) ----
+  - variables:
+      push_delay_minutes: >-
+        {%- if trigger.id == 'activity_motion' or occupy_requested -%}{{ motion_delay }}
+        {%- elif trigger.id == 'activity_presence' -%}{{ presence_delay }}
+        {%- else -%}0{%- endif -%}
+      push_ts: "{{ now_ts + (push_delay_minutes | float(0)) * 60 }}"
+  - if:
+      - condition: template
+        value_template: "{{ (push_delay_minutes | float(0)) > 0 and event_is_fresh and push_ts > h_ts }}"
+    then:
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: "{{ vacancy_helper }}"
+        data:
+          timestamp: "{{ push_ts }}"
   # ---- occupy (R1) ----
   - if:
       - condition: template
