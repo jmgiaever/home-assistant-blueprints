@@ -1550,6 +1550,14 @@ Replace `# ---- apply policy — Task 5 ----` with:
 
 A superseded run (a newer lock event arrived while it was waiting) neither retries nor notifies: the newer event's own run decides.
 
+> **Amended during execution (Task 5 review, rulings in the SDD ledger):** the shipped apply block differs from the
+> snippet above in two ways. (1) The outer `choose` has a single `conditions:` branch (the "settle pending" notification)
+> and a `default:` branch holding the lock/arm sub-blocks, the `superseded`/`secure_failed` variables and the final
+> create-or-dismiss `choose`, so a stale failure notification is dismissed by any applied policy that ends secure.
+> (2) The "settle pending" condition is `(need_lock or need_arm) and (is_state(lock_entity, 'unavailable') or
+> is_state(auto_lock_switch, 'unavailable'))`, with the message "… or its auto-lock switch is unreachable …".
+> `automation/cabin_auto_lock.yaml` on the branch is the reference.
+
 - [ ] **Step 4: Run to see them pass**
 
 Run: `uv run pytest tests/test_04_explicit_lock.py tests/test_09_failures.py -q`

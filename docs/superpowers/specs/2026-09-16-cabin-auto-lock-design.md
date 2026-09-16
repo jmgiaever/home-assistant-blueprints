@@ -157,9 +157,12 @@ the lock entity turns `locked`.
 - Each `vacate()` step: call → `wait_template` for the expected state (≤ 10 s) → if not reached, wait 10 s and retry once
   **only if no newer lock event arrived** (the last-trigger sensor's `last_changed` is unchanged since the run started)
   → if still not reached, `persistent_notification.create` (fixed `notification_id` per instance) plus the optional
-  notify action. A later successful `vacate()` dismisses that notification (`persistent_notification.dismiss`).
-- If the lock entity is `unavailable` when a vacate is due, no call is made: the same notification is posted and the
-  vacate is re-evaluated when the lock returns from `unavailable` and by the 5-minute safety-net trigger (§6).
+  notify action. Any later applied policy that ends secure dismisses that notification (`persistent_notification.dismiss`),
+  including one that finds nothing left to do because the door was secured by hand meanwhile (a dismiss of a missing
+  notification is a silent local no-op, so this also runs on the 5-minute refresh).
+- If the lock entity **or the auto-lock switch** is `unavailable` when something needs doing, no call is made: a
+  "settle pending" notification is posted and the settle is re-evaluated when the lock returns from `unavailable` and by
+  the 5-minute safety-net trigger (§6).
 - R1 failure: one retry, no notification. Worst case the user types the code once more.
 - R5 failure: no retry, no notification (the user is at the door).
 
@@ -348,6 +351,7 @@ Tip for the household, outside this design: enrolling Lukas's fingerprint makes 
 | D19 | Classification by string patterns with explicit exclusions rather than an allow-list of exact strings | New firmware strings of the same shape (e.g. new unlock methods) keep working; exclusions are the dangerous cases and are enumerated |
 | D20 | The occupancy classification is exposed as a label in an optional `input_select`, written on change with `on_<state>` hooks, never read by the door rules; `occupied` = activity within the delays, otherwise the class | The user wants the classification available to other automations (heating, lights); keeping it an output means a helper can never make the door drift |
 | D21 | Resting sensors (bedrooms) never push the timer and take part only in the classification (label and policy choice), as presence for M after their last change; no unlock on motion | Bedroom motion means people are in bed, not active; unlocking on motion was rejected because a PIR false trigger could open the cabin while the family is at the main cabin with phones on the site Wi-Fi |
+| D26 | The secure/dismiss step runs on every applied policy, not only when something had to be done; an unavailable auto-lock switch counts as unreachable (implementation rulings, Task 5 review) | A failure notification must not outlive a door that was secured by hand; the switch and the lock share the integration's availability, and failing towards a notification is the safe direction |
 | D22 | Waits of 10 s, one retry after 10 s, `mode: queued` with `max: 100`, a 5-minute safety-net trigger | Keeps the worst-case run near one minute so a queued occupy is never far behind, never drops a motion burst, and guarantees an overdue settle is retried without depending on the time trigger re-arming |
 | D23 | Policies only strengthen (bolt, arm); only R1 disarms and only R5 unlocks; `rest()` never re-configures an armed lock | Makes every policy application idempotent and memory-free, so the 5-minute refresh is safe, an explicit lock can never be weakened by presence, and a wrong classification fails towards locked |
 | D24 | Resting policy is per instance: `resting_lock_bolt`, `resting_arm_auto_lock`, `resting_armed_seconds`; Vacant is fixed | User asked for Resting to be adjustable (locking action, auto-lock mode, countdown) so other cabins can keep the door free while the household is around; Vacant has one sensible meaning |
