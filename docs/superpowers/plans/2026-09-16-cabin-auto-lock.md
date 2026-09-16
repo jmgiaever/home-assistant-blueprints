@@ -21,7 +21,7 @@
 - The door rules never read the state helper; it is written only (D20).
 - Automation: `mode: queued`, `max: 100`, `max_exceeded: silent` (D22). Waits 10 s, one retry after 10 s, guarded by "no newer lock event" (§4.7).
 - Start-up grace: settles require `(now() - as_datetime(this.last_changed)).total_seconds() >= 120` (§4.4/§6 as amended). No `delay` in the run.
-- Every rule requires `trigger.from_state` to exist for state triggers (entity-added events are not events, §6).
+- Every rule requires both `trigger.from_state` and `trigger.to_state` to exist for state triggers (entity-added and entity-removed events are not events, §6); the presence trigger keeps `not_from`/`not_to`, never an allow-list of states, because persons can be in named zones.
 - License GPL-3.0 (repo's), branch `master`, commits in the form `feat(cabin-auto-lock): …` / `test(cabin-auto-lock): …` / `docs: …`.
 - Never commit secrets. The cabin's config directory is `/var/snap/docker/common/var-lib-docker/volumes/homeassistant-config/_data`; the Pi host has no `python3`, use `docker exec -i homeassistant python3 -`.
 - Git: work in a worktree on branch `feat/cabin-auto-lock` (created with superpowers:using-git-worktrees). Do not push to `master`; the user merges out.
@@ -51,6 +51,7 @@
 - `await clock(seconds, step=60)` advances fake time and fires HA timers. Use `step=10` (or less) in tests that exercise the 10-second waits. `clock()` never waits for run tasks; a run parked in a `wait_template`/`delay` resumes on the next tick. Call `await hass.async_block_till_done()` only after an event whose run cannot be waiting on a timer (a healthy fake answers every command at once), never while a failure is being retried.
 - HA's `homeassistant: start` trigger does **not** fire in tests (hass is already running when the automation is set up); the start grace is exercised through `this.last_changed` (T13).
 - Fake-time: `time.monotonic` is frozen too, so `delay`/`wait_template` timeouts are advanced by `clock()`, never by real waiting.
+- The harness runs Home Assistant in time zone **US/Pacific** (`dt_util.DEFAULT_TIME_ZONE`); `time` triggers such as the night time are local, so tests that depend on wall-clock times freeze to a local datetime, never to a `+00:00` string.
 
 ---
 
@@ -862,7 +863,7 @@ git commit -m "test(cabin-auto-lock): real-HA test harness, fake TTLock, bluepri
 ### Task 2: Event classification and R1 occupy (string trigger)
 
 **Files:**
-- Modify: `automation/cabin_auto_lock.yaml` (variables + `occupy` block; delete the `logbook.log` stand-in)
+- Modify: `automation/cabin_auto_lock.yaml` (variables + `occupy` block; delete the `- variables: skeleton: true` stand-in)
 - Test: `tests/test_01_classification.py`
 
 **Interfaces:**
@@ -951,14 +952,14 @@ async def test_t16_entity_added_is_not_an_event(hass: HomeAssistant, fake: FakeT
 - [ ] **Step 2: Run to see them fail**
 
 Run: `uv run pytest tests/test_01_classification.py -q`
-Expected: the UNLOCK cases of T1, the case-insensitivity test and the "Lukas" half of T3 FAIL (no `configure_autolock` call); the rest pass vacuously.
+Expected: the 13 UNLOCK cases of T1 (of 42 parametrized events), the case-insensitivity test and the "Lukas" half of T3 FAIL (no `configure_autolock` call); the rest pass vacuously.
 
 - [ ] **Step 3: Add the classification variables and the occupy block**
 
 In `variables:`, replace the line `# -- classification (Task 2) --` with:
 
 ```yaml
-  event_is_fresh: "{{ (trigger.from_state is not none) if trigger.from_state is defined else true }}"
+  event_is_fresh: "{{ (trigger.from_state is not none and trigger.to_state is not none) if trigger.from_state is defined else true }}"
   event_value: >-
     {{ (trigger.to_state.state | lower) if (trigger.id == 'lock_event' and trigger.to_state is not none) else '' }}
   previous_value: >-
@@ -1009,7 +1010,7 @@ Note the `unlock_state` half of `occupy_requested` is already present; Task 4 on
 - [ ] **Step 4: Run to see them pass**
 
 Run: `uv run pytest tests/test_01_classification.py tests/test_00_harness.py -q`
-Expected: all pass (`44 passed` or similar: 40 parametrized + 6 + 2). If a parametrized case for `"Lock with QR code failed, the lock is double locked"` occupies, the `match` regex lost its anchor.
+Expected: all pass (`50 passed`: 42 parametrized + 6 + 2 harness). If a parametrized case for `"Lock with QR code failed, the lock is double locked"` occupies, the `match` regex lost its anchor.
 
 - [ ] **Step 5: Commit**
 
@@ -1549,6 +1550,14 @@ Replace `# ---- apply policy — Task 5 ----` with:
 
 A superseded run (a newer lock event arrived while it was waiting) neither retries nor notifies: the newer event's own run decides.
 
+> **Amended during execution (Task 5 review, rulings in the SDD ledger):** the shipped apply block differs from the
+> snippet above in two ways. (1) The outer `choose` has a single `conditions:` branch (the "settle pending" notification)
+> and a `default:` branch holding the lock/arm sub-blocks, the `superseded`/`secure_failed` variables and the final
+> create-or-dismiss `choose`, so a stale failure notification is dismissed by any applied policy that ends secure.
+> (2) The "settle pending" condition is `(need_lock or need_arm) and (is_state(lock_entity, 'unavailable') or
+> is_state(auto_lock_switch, 'unavailable'))`, with the message "… or its auto-lock switch is unreachable …".
+> `automation/cabin_auto_lock.yaml` on the branch is the reference.
+
 - [ ] **Step 4: Run to see them pass**
 
 Run: `uv run pytest tests/test_04_explicit_lock.py tests/test_09_failures.py -q`
@@ -1892,7 +1901,10 @@ git commit -m "feat(cabin-auto-lock): settle on the vacancy timer with resting/v
 ```python
 """T10 night beats motion, presence and passage mode; off by default."""
 
+from datetime import datetime
+
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from .conftest import KITCHEN
 from .fakes import LOCK, FakeTTLock
@@ -1912,7 +1924,7 @@ async def busy_evening(hass: HomeAssistant, fake: FakeTTLock) -> None:
 
 
 async def test_t10_night_vacates_despite_everything(hass, fake: FakeTTLock, policy, clock, freezer) -> None:
-    freezer.move_to("2026-09-16 22:50:00+00:00")     # before setup, so the 23:00 trigger is scheduled for tonight
+    freezer.move_to(datetime(2026, 9, 16, 22, 50, tzinfo=dt_util.DEFAULT_TIME_ZONE))   # 22:50 LOCAL (the harness zone is US/Pacific), before setup
     await policy(night_enabled=True, night_time="23:00:00")   # setup + 3 min grace -> 22:53
     await busy_evening(hass, fake)
     await clock(8 * 60, step=30)                     # crosses 23:00
@@ -1920,7 +1932,7 @@ async def test_t10_night_vacates_despite_everything(hass, fake: FakeTTLock, poli
 
 
 async def test_t10_night_is_off_by_default(hass, fake: FakeTTLock, policy, clock, freezer) -> None:
-    freezer.move_to("2026-09-16 22:50:00+00:00")
+    freezer.move_to(datetime(2026, 9, 16, 22, 50, tzinfo=dt_util.DEFAULT_TIME_ZONE))
     await policy()
     await busy_evening(hass, fake)
     await clock(8 * 60, step=30)
@@ -2693,7 +2705,7 @@ variables:
   stale_countdown_window: !input stale_countdown_window
   state_select: !input state_select
   notification_id: "cabin_auto_lock_{{ lock_entity | replace('.', '_') }}"
-  event_is_fresh: "{{ (trigger.from_state is not none) if trigger.from_state is defined else true }}"
+  event_is_fresh: "{{ (trigger.from_state is not none and trigger.to_state is not none) if trigger.from_state is defined else true }}"
   event_value: >-
     {{ (trigger.to_state.state | lower) if (trigger.id == 'lock_event' and trigger.to_state is not none) else '' }}
   previous_value: >-
