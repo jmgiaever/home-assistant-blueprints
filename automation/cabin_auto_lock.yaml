@@ -312,16 +312,51 @@ variables:
   stale_countdown_window: !input stale_countdown_window
   state_select: !input state_select
   notification_id: "cabin_auto_lock_{{ lock_entity | replace('.', '_') }}"
-  # -- classification (Task 2) --
+  event_is_fresh: "{{ (trigger.from_state is not none) if trigger.from_state is defined else true }}"
+  event_value: >-
+    {{ (trigger.to_state.state | lower) if (trigger.id == 'lock_event' and trigger.to_state is not none) else '' }}
+  previous_value: >-
+    {{ (trigger.from_state.state | lower) if (trigger.id == 'lock_event' and trigger.from_state is not none) else '' }}
+  is_unlock_event: "{{ 'unlock' in event_value and not (event_value is search('fail|try to|expired|passage')) }}"
+  is_explicit_lock: "{{ (event_value is match('^(lock by|lock with|locked via)')) and 'fail' not in event_value }}"
+  is_auto_lock: "{{ event_value == 'auto lock' }}"
+  previous_was_unlock: "{{ 'unlock' in previous_value and not (previous_value is search('fail|try to|expired|passage')) }}"
+  occupy_requested: "{{ (trigger.id == 'lock_event' and is_unlock_event and event_is_fresh) or trigger.id == 'unlock_state' }}"
+  operator_trusted: >-
+    {{ (trusted_operators | count == 0)
+       or (last_operator_sensor != ''
+           and (states(last_operator_sensor) | lower | trim) in (trusted_operators | map('lower') | map('trim') | list)) }}
   # -- live facts (Task 3, Task 6) --
 
 actions:
   # ---- timer push (R0, R1) — Task 3 ----
-  # ---- occupy (R1) — Task 2 ----
+  # ---- occupy (R1) ----
+  - if:
+      - condition: template
+        value_template: "{{ occupy_requested and operator_trusted and is_state(auto_lock_switch, 'on') }}"
+    then:
+      - action: ttlock.configure_autolock
+        target:
+          entity_id: "{{ lock_entity }}"
+        data:
+          enabled: false
+        continue_on_error: true
+      - wait_template: "{{ is_state(auto_lock_switch, 'off') }}"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - if:
+          - condition: template
+            value_template: "{{ not wait.completed }}"
+        then:
+          - delay: "00:00:10"
+          - action: ttlock.configure_autolock
+            target:
+              entity_id: "{{ lock_entity }}"
+            data:
+              enabled: false
+            continue_on_error: true
   # ---- policy selection (R2, R3, R4) — Task 5, 6, 7 ----
   # ---- explicit lock ends activity (R2) — Task 5 ----
   # ---- apply policy — Task 5 ----
   # ---- stale countdown (R5) — Task 8 ----
   # ---- label — Task 9 ----
-  - variables:
-      skeleton: true
