@@ -87,7 +87,7 @@ Motion sensors come in two groups: **activity sensors** (living areas) push the 
 | # | Name | Triggers | Conditions | Actions |
 |---|---|---|---|---|
 | **R0** | Track activity | any **activity** motion sensor changes between `on` and `off` (resting sensors excluded); any tracked person changes between two known states | both old and new state are known (not `unavailable`/`unknown`/none), so boot-time and outage transitions never push *H* | motion: `H := max(H, now + M)`; person: `H := max(H, now + P)`; `label(occupied)` |
-| **R1** | Occupy | last-trigger changes to an `UNLOCK` value; **or** the lock entity changes to `unlocked` from `locked`/`locking`/`unlocking` | trusted-operator list empty, or last-operator value is in it (trimmed, case-insensitive); a non-empty list without an operator sensor denies everything (README says so) | `H := max(H, now + M)`; if the auto-lock switch is `on` → `configure_autolock(enabled: false)`; `label(occupied)` |
+| **R1** | Occupy | last-trigger changes to an `UNLOCK` value; **or** the lock entity changes to `unlocked` from `locked`/`locking`/`unlocking` | trusted-operator list empty, or last-operator value is in it (trimmed, case-insensitive); a non-empty list without an operator sensor denies everything (README says so) (the trusted-operator condition gates the whole rule, including the timer push and the label) | `H := max(H, now + M)`; if the auto-lock switch is `on` → `configure_autolock(enabled: false)`; `label(occupied)` |
 | **R2** | Vacate now | last-trigger changes to an `EXPLICIT_LOCK` value | — | `vacate()`; `H := now` (activity is over); `refresh_label()` |
 | **R3** | Settle + refresh label | time reaches *H*; passage sensor turns `off`; lock entity returns from `unavailable`; safety net every 5 min; HA start (+2 min grace) | — | **Settle** when `now ≥ H`, no activity sensor is `on` and the passage sensor is not `on`: if the lock entity is `unavailable` → persistent notification "settle pending, lock unreachable" (re-evaluated when the lock returns and by the safety net), else `apply(classify())` (idempotent: no call when nothing needs strengthening). Then always `refresh_label()` |
 | **R4** | Vacate at night | time equals the night time | night enabled | `vacate()` (idempotent); `refresh_label()` (passage mode does **not** suppress this) |
@@ -129,6 +129,9 @@ with a monotonic `max`. Because both constraints only ever move forward in time,
   the automation entity's own last-changed time; the 5-minute safety net then performs the first evaluation. If *H*
   is already in the past and the conditions hold, the door settles then; otherwise the restored *H* fires at its
   original time. A `delay` inside the run was rejected because in queued mode it would hold every other run.
+- Pushed timestamps are rounded up to whole seconds: HA's `time` trigger schedules on the helper's whole-second
+  attributes, so a fractional H would fire the trigger before H and the settle check would fail at that instant
+  (final review I1).
 
 ### 4.5 Passage mode = guest hours
 
@@ -165,6 +168,9 @@ the lock entity turns `locked`.
   the 5-minute safety-net trigger (§6).
 - R1 failure: one retry, no notification. Worst case the user types the code once more.
 - R5 failure: no retry, no notification (the user is at the door).
+- A queued policy run re-checks the last-trigger marker before applying anything; if a lock event arrived while it
+  was queued, it applies nothing (the newer event's own run decides). Residual: an unlock seen only on the lock
+  entity (repeated string) is invisible to the marker.
 
 ### 4.8 Restart behaviour
 

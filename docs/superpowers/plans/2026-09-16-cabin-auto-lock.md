@@ -52,6 +52,7 @@
 - HA's `homeassistant: start` trigger does **not** fire in tests (hass is already running when the automation is set up); the start grace is exercised through `this.last_changed` (T13).
 - Fake-time: `time.monotonic` is frozen too, so `delay`/`wait_template` timeouts are advanced by `clock()`, never by real waiting.
 - The harness runs Home Assistant in time zone **US/Pacific** (`dt_util.DEFAULT_TIME_ZONE`); `time` triggers such as the night time are local, so tests that depend on wall-clock times freeze to a local datetime, never to a `+00:00` string.
+- `policy()` aligns the frozen clock to M0:30.123456 of the current 5-minute block so the safety net ticks at +4:30 after test start.
 
 ---
 
