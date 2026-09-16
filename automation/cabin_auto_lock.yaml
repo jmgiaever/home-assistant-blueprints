@@ -352,10 +352,10 @@ actions:
   # ---- timer push (R0, R1) ----
   - variables:
       push_delay_minutes: >-
-        {%- if trigger.id == 'activity_motion' or occupy_requested -%}{{ motion_delay }}
+        {%- if trigger.id == 'activity_motion' or (occupy_requested and operator_trusted) -%}{{ motion_delay }}
         {%- elif trigger.id == 'activity_presence' -%}{{ presence_delay }}
         {%- else -%}0{%- endif -%}
-      push_ts: "{{ now_ts + (push_delay_minutes | float(0)) * 60 }}"
+      push_ts: "{{ (now_ts + (push_delay_minutes | float(0)) * 60) | round(0, 'ceil') | int }}"
   - if:
       - condition: template
         value_template: "{{ (push_delay_minutes | float(0)) > 0 and event_is_fresh and push_ts > h_ts }}"
@@ -410,7 +410,9 @@ actions:
   # ---- apply policy (strengthen-only, idempotent, guarded retry) ----
   - if:
       - condition: template
-        value_template: "{{ policy != 'none' }}"
+        value_template: >-
+          {{ policy != 'none'
+             and (expand(last_trigger_sensor) | map(attribute='last_changed') | map('string') | first | default('')) == event_marker }}
     then:
       - variables:
           want_lock: "{{ policy == 'vacant' or resting_lock_bolt }}"
@@ -508,7 +510,7 @@ actions:
                       notification_id: "{{ notification_id }}"
                       title: "Cabin auto-lock: could not secure the door"
                       message: >-
-                        {{ lock_entity }} could not be {{ 'locked' if need_lock else 'armed' }} after two attempts.
+                        {{ lock_entity }} could not be {{ 'locked' if (need_lock and not is_state(lock_entity, 'locked')) else 'armed' }} after two attempts.
                         Check the TTLock gateway and cloud.
                   - sequence: !input notify_actions
               - conditions:
@@ -549,10 +551,14 @@ actions:
             data:
               option: "{{ label }}"
             continue_on_error: true
-          - choose:
-              - conditions: "{{ label == 'occupied' }}"
-                sequence: !input on_occupied
-              - conditions: "{{ label == 'resting' }}"
-                sequence: !input on_resting
-              - conditions: "{{ label == 'vacant' }}"
-                sequence: !input on_vacant
+          - if:
+              - condition: template
+                value_template: "{{ is_state(state_select, label) }}"
+            then:
+              - choose:
+                  - conditions: "{{ label == 'occupied' }}"
+                    sequence: !input on_occupied
+                  - conditions: "{{ label == 'resting' }}"
+                    sequence: !input on_resting
+                  - conditions: "{{ label == 'vacant' }}"
+                    sequence: !input on_vacant
