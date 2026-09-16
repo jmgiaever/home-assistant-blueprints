@@ -125,8 +125,10 @@ with a monotonic `max`. Because both constraints only ever move forward in time,
   **locked**, never towards an open door. After a restart a resting sensor's `last_changed` is the boot time, so for
   up to M after a boot the class may read `resting` where `vacant` was due; the refresh corrects it, and with the
   default Resting policy the door is the same either way.
-- HA start: R3 waits 2 min (Z-Wave and UniFi settle) before evaluating. If *H* is already in the past and the
-  conditions hold, the door settles then; otherwise the restored *H* fires at its original time.
+- HA start: settles are suppressed for 2 min after the automation (re)loads (Z-Wave and UniFi settle), measured on
+  the automation entity's own last-changed time; the 5-minute safety net then performs the first evaluation. If *H*
+  is already in the past and the conditions hold, the door settles then; otherwise the restored *H* fires at its
+  original time. A `delay` inside the run was rejected because in queued mode it would hold every other run.
 
 ### 4.5 Passage mode = guest hours
 
@@ -244,7 +246,12 @@ and is logged, and the door rules are unaffected.
   so the patterns exist once, are unit-tested through the automation, and show up in the automation trace for
   troubleshooting.
 - `time` trigger with `at: !input vacancy_helper` re-arms whenever the helper changes; `at: !input night_time` for R4.
-- R3's HA-start path: `trigger: homeassistant, event: start` → `delay: 00:02:00` → same condition block.
+- R3's HA-start path: `trigger: homeassistant, event: start` runs only the label refresh; the settle conditions
+  include `(now() - as_datetime(this.last_changed)).total_seconds() >= 120`, so the first settle after a (re)load is
+  performed by the safety net. `this` is the automation's own state dict, whose `last_changed` is an ISO string.
+- The lock-event trigger uses both `not_from` and `not_to` `[unavailable, unknown]`: with `not_from` alone the
+  transition *to* `unavailable` still fires. State triggers also fire when an entity is first added (old state
+  none), so every rule additionally requires `trigger.from_state` to exist.
 - Every TTLock call uses `continue_on_error: true` and is followed by a `wait_template` on the observable state.
 - The blueprint contains no entity ids, names or site specifics; everything comes from inputs.
 - The label is a projection: `occupied` while `now < H`, otherwise `classify()` from live states; compared with the
