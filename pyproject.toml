@@ -1,0 +1,18 @@
+[project]
+name = "home-assistant-blueprints"
+version = "0.0.0"
+description = "Home Assistant blueprints and their tests"
+requires-python = ">=3.14.2"
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "pytest-homeassistant-custom-component==0.13.357",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

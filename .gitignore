@@ -12,3 +12,9 @@ Session.vim
 
 # subagent-driven-development scratch (ledger, briefs, review packages)
 .superpowers/
+
+# ---> Python
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc

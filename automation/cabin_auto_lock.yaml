@@ -1,0 +1,327 @@
+blueprint:
+  name: Cabin auto-lock policy
+  description: >-
+    Keeps a TTLock door free while the cabin is in use and secures it when the cabin settles,
+    so nobody enters the code more than once per visit.
+
+    OCCUPIED = auto-lock off: every unlock stays unlocked. Any successful unlock occupies.
+    RESTING = the household is here but quiet: the door follows the resting policy below.
+    VACANT = nobody is here: bolt locked, auto-lock armed. An explicit lock (keypad lock key,
+    app, dashboard, voice) vacates at once. A restart-proof timer (an input_datetime helper)
+    settles the door a while after the last living-area motion. Passage mode counts as guest
+    hours. Design and decisions: docs/superpowers/specs/2026-09-16-cabin-auto-lock-design.md
+    in github.com/jmgiaever/home-assistant-blueprints.
+  domain: automation
+  author: Joachim M. G. Giæver
+  homeassistant:
+    min_version: "2025.4.0"
+  input:
+    lock:
+      name: Lock
+      icon: mdi:lock-smart
+      input:
+        lock_entity:
+          name: Lock
+          description: The TTLock lock entity.
+          selector:
+            entity:
+              filter:
+                - integration: ttlock
+                  domain: lock
+        last_trigger_sensor:
+          name: Last trigger sensor
+          description: The lock's "Last Trigger" sensor (values such as "unlock by fingerprint").
+          selector:
+            entity:
+              filter:
+                - integration: ttlock
+                  domain: sensor
+        auto_lock_switch:
+          name: Auto-lock switch
+          description: The lock's "Auto Lock" switch.
+          selector:
+            entity:
+              filter:
+                - integration: ttlock
+                  domain: switch
+        last_operator_sensor:
+          name: Last operator sensor (optional)
+          description: Only needed together with a trusted-operator list.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - integration: ttlock
+                  domain: sensor
+        passage_mode_sensor:
+          name: Passage mode sensor (optional)
+          description: While passage mode is on (guest hours) the timer never locks the door.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - integration: ttlock
+                  domain: binary_sensor
+    timers:
+      name: Timers
+      icon: mdi:timer-sand
+      input:
+        vacancy_helper:
+          name: Vacancy timer helper
+          description: >-
+            An input_datetime helper WITH date and time, one per lock. It stores "not before" and
+            survives restarts. Create it under Settings → Devices & services → Helpers.
+          selector:
+            entity:
+              filter:
+                - domain: input_datetime
+        motion_delay:
+          name: Motion delay (M)
+          description: Minutes without living-area motion before the door settles.
+          default: 45
+          selector:
+            number:
+              min: 1
+              max: 720
+              unit_of_measurement: min
+              mode: box
+        presence_delay:
+          name: Presence delay (P)
+          description: Minutes after a presence change before the door may settle.
+          default: 20
+          selector:
+            number:
+              min: 1
+              max: 720
+              unit_of_measurement: min
+              mode: box
+        armed_seconds:
+          name: Armed auto-lock seconds (S)
+          description: Auto-lock countdown used when the cabin is vacant.
+          default: 30
+          selector:
+            number:
+              min: 1
+              max: 60
+              unit_of_measurement: s
+              mode: box
+    resting_policy:
+      name: Resting policy
+      icon: mdi:sleep
+      description: What the door does when the household is here but quiet.
+      input:
+        resting_lock_bolt:
+          name: Lock the bolt when resting
+          default: true
+          selector:
+            boolean: {}
+        resting_arm_auto_lock:
+          name: Arm auto-lock when resting
+          default: true
+          selector:
+            boolean: {}
+        resting_armed_seconds:
+          name: Resting auto-lock seconds
+          description: Countdown used when resting arms auto-lock. Never re-configures an already armed lock.
+          default: 30
+          selector:
+            number:
+              min: 1
+              max: 60
+              unit_of_measurement: s
+              mode: box
+    occupancy:
+      name: Occupancy sources
+      icon: mdi:motion-sensor
+      input:
+        motion_sensors:
+          name: Activity motion sensors
+          description: Living-area sensors. Motion here keeps the door free.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: binary_sensor
+                  device_class:
+                    - motion
+                    - occupancy
+        resting_sensors:
+          name: Resting motion sensors
+          description: Bedroom sensors. Motion here never keeps the door free; it only marks the cabin as resting rather than vacant.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: binary_sensor
+                  device_class:
+                    - motion
+                    - occupancy
+        presence_entities:
+          name: Presence
+          description: Persons or device trackers. "home" postpones settling and marks the cabin as resting rather than vacant. Never keeps the door unlocked.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain:
+                    - person
+                    - device_tracker
+        trusted_operators:
+          name: Trusted operators (optional)
+          description: Operator names as shown by the last-operator sensor. Empty means anyone who unlocks occupies the cabin.
+          default: []
+          selector:
+            text:
+              multiple: true
+    night:
+      name: Night
+      icon: mdi:weather-night
+      input:
+        night_enabled:
+          name: Lock at night
+          default: false
+          selector:
+            boolean: {}
+        night_time:
+          name: Night time
+          default: "23:00:00"
+          selector:
+            time: {}
+    safety:
+      name: Safety
+      icon: mdi:shield-lock
+      input:
+        stale_countdown_unlock:
+          name: Undo a stale auto-lock countdown
+          description: If the lock still auto-locks right after someone occupied the cabin, unlock it once.
+          default: true
+          selector:
+            boolean: {}
+        stale_countdown_window:
+          name: Stale countdown window
+          default: 90
+          selector:
+            number:
+              min: 10
+              max: 300
+              unit_of_measurement: s
+              mode: box
+        notify_actions:
+          name: On failure
+          description: Actions to run when the door could not be locked or armed (in addition to a persistent notification).
+          default: []
+          selector:
+            action: {}
+    state_output:
+      name: State output (optional)
+      icon: mdi:home-switch
+      input:
+        state_select:
+          name: State helper
+          description: An input_select with exactly the options occupied, resting and vacant. Written by this automation, never read by it.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: input_select
+        on_occupied:
+          name: When the cabin becomes occupied
+          default: []
+          selector:
+            action: {}
+        on_resting:
+          name: When the cabin becomes resting
+          default: []
+          selector:
+            action: {}
+        on_vacant:
+          name: When the cabin becomes vacant
+          default: []
+          selector:
+            action: {}
+
+mode: queued
+max: 100
+max_exceeded: silent
+
+trigger_variables:
+  passage_mode_sensor: !input passage_mode_sensor
+
+triggers:
+  - id: activity_motion
+    trigger: state
+    entity_id: !input motion_sensors
+    from: ["on", "off"]
+    to: ["on", "off"]
+  - id: activity_presence
+    trigger: state
+    entity_id: !input presence_entities
+    not_from: ["unavailable", "unknown"]
+    not_to: ["unavailable", "unknown"]
+  - id: lock_event
+    trigger: state
+    entity_id: !input last_trigger_sensor
+    not_from: ["unavailable", "unknown"]
+    not_to: ["unavailable", "unknown"]
+  - id: unlock_state
+    trigger: state
+    entity_id: !input lock_entity
+    from: ["locked", "locking", "unlocking"]
+    to: "unlocked"
+  - id: vacancy_time
+    trigger: time
+    at: !input vacancy_helper
+  - id: passage_off
+    trigger: template
+    value_template: "{{ passage_mode_sensor != '' and is_state(passage_mode_sensor, 'off') }}"
+  - id: lock_available
+    trigger: state
+    entity_id: !input lock_entity
+    from: "unavailable"
+  - id: safety_net
+    trigger: time_pattern
+    minutes: "/5"
+  - id: ha_start
+    trigger: homeassistant
+    event: start
+  - id: night
+    trigger: time
+    at: !input night_time
+
+variables:
+  lock_entity: !input lock_entity
+  last_trigger_sensor: !input last_trigger_sensor
+  auto_lock_switch: !input auto_lock_switch
+  last_operator_sensor: !input last_operator_sensor
+  vacancy_helper: !input vacancy_helper
+  motion_delay: !input motion_delay
+  presence_delay: !input presence_delay
+  armed_seconds: !input armed_seconds
+  resting_lock_bolt: !input resting_lock_bolt
+  resting_arm_auto_lock: !input resting_arm_auto_lock
+  resting_armed_seconds: !input resting_armed_seconds
+  motion_sensors: !input motion_sensors
+  resting_sensors: !input resting_sensors
+  presence_entities: !input presence_entities
+  trusted_operators: !input trusted_operators
+  night_enabled: !input night_enabled
+  stale_countdown_unlock: !input stale_countdown_unlock
+  stale_countdown_window: !input stale_countdown_window
+  state_select: !input state_select
+  notification_id: "cabin_auto_lock_{{ lock_entity | replace('.', '_') }}"
+  # -- classification (Task 2) --
+  # -- live facts (Task 3, Task 6) --
+
+actions:
+  # ---- timer push (R0, R1) — Task 3 ----
+  # ---- occupy (R1) — Task 2 ----
+  # ---- policy selection (R2, R3, R4) — Task 5, 6, 7 ----
+  # ---- explicit lock ends activity (R2) — Task 5 ----
+  # ---- apply policy — Task 5 ----
+  # ---- stale countdown (R5) — Task 8 ----
+  # ---- label — Task 9 ----
+  - variables:
+      skeleton: true
