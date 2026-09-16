@@ -330,7 +330,23 @@ variables:
   helper_ok: "{{ state_attr(vacancy_helper, 'timestamp') is not none }}"
   now_ts: "{{ now().timestamp() }}"
   event_marker: "{{ expand(last_trigger_sensor) | map(attribute='last_changed') | map('string') | first | default('') }}"
-  # -- live facts (Task 6) --
+  activity_on: "{{ expand(motion_sensors) | selectattr('state', 'eq', 'on') | list | count > 0 }}"
+  passage_on: "{{ passage_mode_sensor != '' and is_state(passage_mode_sensor, 'on') }}"
+  persons_home: "{{ expand(presence_entities) | selectattr('state', 'eq', 'home') | list | count > 0 }}"
+  resting_recent: >-
+    {%- set ns = namespace(recent=false) -%}
+    {%- for s in expand(resting_sensors) -%}
+      {%- if s.state == 'on' or (s.state == 'off' and (now() - s.last_changed).total_seconds() < motion_delay * 60) -%}
+        {%- set ns.recent = true -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {{ ns.recent }}
+  classification: "{{ 'resting' if (persons_home or resting_recent) else 'vacant' }}"
+  automation_age: "{{ (now() - as_datetime(this.last_changed)).total_seconds() }}"
+  settle_trigger: "{{ trigger.id in ['vacancy_time', 'passage_off', 'lock_available', 'safety_net'] }}"
+  settle_due: >-
+    {{ settle_trigger and helper_ok and now_ts >= h_ts and not activity_on and not passage_on
+       and automation_age >= 120 }}
 
 actions:
   # ---- timer push (R0, R1) ----
@@ -378,6 +394,7 @@ actions:
   - variables:
       policy: >-
         {%- if trigger.id == 'lock_event' and is_explicit_lock and event_is_fresh -%}vacant
+        {%- elif settle_due -%}{{ classification }}
         {%- else -%}none{%- endif -%}
   # ---- explicit lock ends activity (R2) ----
   - if:
