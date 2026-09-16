@@ -8,6 +8,7 @@ dependencies = []
 [dependency-groups]
 dev = [
   "pytest-homeassistant-custom-component==0.13.357",
+  "ruff",
 ]
 
 [tool.uv]
@@ -16,3 +17,9 @@ package = false
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["F"]
