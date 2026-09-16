@@ -518,5 +518,16 @@ actions:
                   - action: persistent_notification.dismiss
                     data:
                       notification_id: "{{ notification_id }}"
-  # ---- stale countdown (R5) — Task 8 ----
+  # ---- stale countdown (R5) ----
+  - if:
+      - condition: template
+        value_template: >-
+          {{ trigger.id == 'lock_event' and is_auto_lock and event_is_fresh and stale_countdown_unlock
+             and is_state(auto_lock_switch, 'off') and previous_was_unlock
+             and (now() - trigger.from_state.last_changed).total_seconds() < stale_countdown_window }}
+    then:
+      - action: lock.unlock
+        target:
+          entity_id: "{{ lock_entity }}"
+        continue_on_error: true
   # ---- label — Task 9 ----
