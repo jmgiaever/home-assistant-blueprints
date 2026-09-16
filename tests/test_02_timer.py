@@ -62,6 +62,17 @@ async def test_t22_resting_sensor_never_pushes(hass: HomeAssistant, fake: FakeTT
     assert helper_ts(hass) == before
 
 
+async def test_t5_zone_transition_is_a_presence_change(hass: HomeAssistant, fake: FakeTTLock, policy, clock) -> None:
+    await policy()
+    hass.states.async_set(JOACHIM, "home")
+    await hass.async_block_till_done()
+    await clock(30 * MIN)
+    t1 = dt_util.utcnow().timestamp()
+    hass.states.async_set(JOACHIM, "Hovedhytta")           # a zone name is a known state
+    await hass.async_block_till_done()
+    assert helper_ts(hass) == pytest.approx(t1 + 20 * MIN, abs=1)
+
+
 async def test_t16_boot_and_outage_transitions_never_push(hass: HomeAssistant, fake: FakeTTLock, policy) -> None:
     await policy()
     before = helper_ts(hass)

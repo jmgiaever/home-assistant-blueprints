@@ -259,8 +259,8 @@ triggers:
   - id: activity_presence
     trigger: state
     entity_id: !input presence_entities
-    to: ["home", "not_home"]
     not_from: ["unavailable", "unknown"]
+    not_to: ["unavailable", "unknown"]
   - id: lock_event
     trigger: state
     entity_id: !input last_trigger_sensor
@@ -312,7 +312,7 @@ variables:
   stale_countdown_window: !input stale_countdown_window
   state_select: !input state_select
   notification_id: "cabin_auto_lock_{{ lock_entity | replace('.', '_') }}"
-  event_is_fresh: "{{ (trigger.from_state is not none) if trigger.from_state is defined else true }}"
+  event_is_fresh: "{{ (trigger.from_state is not none and trigger.to_state is not none) if trigger.from_state is defined else true }}"
   event_value: >-
     {{ (trigger.to_state.state | lower) if (trigger.id == 'lock_event' and trigger.to_state is not none) else '' }}
   previous_value: >-
