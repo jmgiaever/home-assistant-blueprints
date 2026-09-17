@@ -2544,7 +2544,7 @@ Expected: ends with `Successful config (partial)` and no line mentioning `cabin_
 
 - [ ] **Step 5: Reload automations**
 
-Ask the user to reload: Developer tools → YAML → *Automations*. (Fallback: `$CAB "sudo docker restart homeassistant"`, ~60 s.)
+Ask the user to reload: Developer tools → YAML → *Automations*. (Fallback: `$CAB "sudo docker restart -t 60 homeassistant"`, ~60 s. Always pass `-t 60`: the default 10 s stop timeout kills HA before its final restore-state dump, so helpers come back up to 15 min stale — measured in acceptance A5/A5b.)
 
 - [ ] **Step 6: Verify the instance is live**
 
@@ -2621,7 +2621,7 @@ User: unlock by fingerprint (occupy), walk through the living room, then put bot
 
 - [ ] **Step 7: A5 — restart mid-timer**
 
-Repeat the occupy + motion, then within the 2-minute window run `$CAB "sudo docker restart homeassistant"`. Expected: after HA is back, the door locks at the *original* helper time or at the first safety-net tick after the 2-minute grace, whichever is later; record both times.
+Repeat the occupy + motion, then within the 2-minute window run `$CAB "sudo docker restart -t 60 homeassistant"` (`-t 60`, see Task 12). Expected: after HA is back, the door locks at the *original* helper time or at the first safety-net tick after the 2-minute grace, whichever is later; record both times.
 
 - [ ] **Step 8: A6 — passage window end (only if a passage window exists in the TTLock app)**
 

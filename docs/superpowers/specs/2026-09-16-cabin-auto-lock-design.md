@@ -385,3 +385,8 @@ Tip for the household, outside this design: enrolling Lukas's fingerprint makes 
 - Managing guest hours (passage schedules) or passcodes from HA is a separate blueprint if ever wanted.
 - Upstream: a small PR to `hass-ttlock` setting `force_update` on the last-trigger and last-operator sensors would make
   repeated identical events visible; the blueprint must not depend on it (D11), so it is a separate follow-up.
+- **Open from acceptance (2026-09-17, see `docs/superpowers/acceptance/2026-09-17-cabin-auto-lock-hytta.md`):** persons
+  tracked by GPS read the site's building zones (`Johanne`, `Stabburet`, `Garasjen`) rather than `home`, so the blueprint
+  counts them as away, and every move between buildings is a presence change that pushes the timer by P. Candidate
+  change: a `site_zones` input (zones that count as present besides `home`), and a decision on whether moves between
+  site zones push the timer (activity) or only present↔away transitions do. Not decided yet.
