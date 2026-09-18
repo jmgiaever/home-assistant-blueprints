@@ -160,7 +160,11 @@ blueprint:
                     - occupancy
         presence_entities:
           name: Presence
-          description: Persons or device trackers. "home" postpones settling and marks the cabin as resting rather than vacant. Never keeps the door unlocked.
+          description: >-
+            Persons or device trackers. Present = "home" or any zone inside the home zone (HA lists it
+            in the in_zones attribute). A presence change that starts or ends on the site postpones
+            settling by P; presence marks the cabin as resting rather than vacant. Never keeps the door
+            unlocked.
           default: []
           selector:
             entity:
@@ -332,7 +336,21 @@ variables:
   event_marker: "{{ expand(last_trigger_sensor) | map(attribute='last_changed') | map('string') | first | default('') }}"
   activity_on: "{{ expand(motion_sensors) | selectattr('state', 'eq', 'on') | list | count > 0 }}"
   passage_on: "{{ passage_mode_sensor != '' and is_state(passage_mode_sensor, 'on') }}"
-  persons_home: "{{ expand(presence_entities) | selectattr('state', 'eq', 'home') | list | count > 0 }}"
+  persons_present: >-
+    {%- set ns = namespace(present=false) -%}
+    {%- for s in expand(presence_entities) -%}
+      {%- if s.state == 'home' or 'zone.home' in (s.attributes.in_zones | default([])) -%}
+        {%- set ns.present = true -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {{ ns.present }}
+  presence_push: >-
+    {%- set on_site = namespace(from=false, to=false) -%}
+    {%- if trigger.id == 'activity_presence' and trigger.from_state is not none and trigger.to_state is not none -%}
+      {%- set on_site.from = trigger.from_state.state == 'home' or 'zone.home' in (trigger.from_state.attributes.in_zones | default([])) -%}
+      {%- set on_site.to = trigger.to_state.state == 'home' or 'zone.home' in (trigger.to_state.attributes.in_zones | default([])) -%}
+    {%- endif -%}
+    {{ on_site.from or on_site.to }}
   resting_recent: >-
     {%- set ns = namespace(recent=false) -%}
     {%- for s in expand(resting_sensors) -%}
@@ -341,7 +359,7 @@ variables:
       {%- endif -%}
     {%- endfor -%}
     {{ ns.recent }}
-  classification: "{{ 'resting' if (persons_home or resting_recent) else 'vacant' }}"
+  classification: "{{ 'resting' if (persons_present or resting_recent) else 'vacant' }}"
   automation_age: "{{ (now() - as_datetime(this.last_changed)).total_seconds() }}"
   settle_trigger: "{{ trigger.id in ['vacancy_time', 'passage_off', 'lock_available', 'safety_net'] }}"
   settle_due: >-
@@ -353,7 +371,7 @@ actions:
   - variables:
       push_delay_minutes: >-
         {%- if trigger.id == 'activity_motion' or (occupy_requested and operator_trusted) -%}{{ motion_delay }}
-        {%- elif trigger.id == 'activity_presence' -%}{{ presence_delay }}
+        {%- elif presence_push -%}{{ presence_delay }}
         {%- else -%}0{%- endif -%}
       push_ts: "{{ (now_ts + (push_delay_minutes | float(0)) * 60) | round(0, 'ceil') | int }}"
   - if:
@@ -540,7 +558,7 @@ actions:
       - variables:
           label: >-
             {%- set h = state_attr(vacancy_helper, 'timestamp') | float(0) -%}
-            {{ 'occupied' if now().timestamp() < h else ('resting' if (persons_home or resting_recent) else 'vacant') }}
+            {{ 'occupied' if now().timestamp() < h else ('resting' if (persons_present or resting_recent) else 'vacant') }}
       - if:
           - condition: template
             value_template: "{{ not is_state(state_select, label) }}"

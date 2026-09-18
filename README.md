@@ -41,7 +41,7 @@ never locks during a window, the window end does.
 | Resting policy | lock the bolt / arm auto-lock / resting seconds | on / on / 30 s | off/off leaves the door free while the household is around |
 | Occupancy | activity motion sensors | none | living areas: keep the door free |
 | Occupancy | resting motion sensors | none | bedrooms: mark the cabin as resting, never keep the door free |
-| Occupancy | presence | none | persons or trackers; postpones settling and marks resting; never keeps the door unlocked |
+| Occupancy | presence | none | persons or trackers; present = home or any zone inside the home zone; a change that starts or ends on the site postpones settling by P; presence marks resting; never keeps the door unlocked |
 | Occupancy | trusted operators | none | names as shown by the last-operator sensor; empty = anyone |
 | Night | lock at night / night time | off / 23:00 | beats passage mode |
 | Safety | undo stale countdown / window | on / 90 s | |

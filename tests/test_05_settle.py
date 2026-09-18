@@ -92,6 +92,25 @@ async def test_t24_resting_policy_off_off_leaves_door_free_then_vacates_when_pho
     assert fake.calls == VACATE
 
 
+async def test_t24_person_in_a_zone_inside_the_home_zone_is_present(hass, fake: FakeTTLock, policy, clock) -> None:
+    await policy(resting_lock_bolt=False, resting_arm_auto_lock=False)
+    hass.states.async_set(JOACHIM, "Johanne", {"in_zones": ["zone.johanne", "zone.home"]})
+    await hass.async_block_till_done()
+    await occupied_with_motion(hass, fake)
+    await clock(50 * MIN)
+    assert fake.calls == []                               # resting: Joachim is on the site
+    assert hass.states.get(LOCK).state == "unlocked"
+
+
+async def test_t24_person_in_a_zone_elsewhere_is_not_present(hass, fake: FakeTTLock, policy, clock) -> None:
+    await policy(resting_lock_bolt=False, resting_arm_auto_lock=False)
+    hass.states.async_set(JOACHIM, "Work", {"in_zones": ["zone.work"]})
+    await hass.async_block_till_done()
+    await occupied_with_motion(hass, fake)
+    await clock(50 * MIN)
+    assert fake.calls == VACATE                           # vacant: a zone outside the home zone is away
+
+
 async def test_t24_resting_policy_lock_only(hass, fake: FakeTTLock, policy, clock) -> None:
     await policy(resting_arm_auto_lock=False)
     hass.states.async_set(LUKAS, "home")

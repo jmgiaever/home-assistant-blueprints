@@ -44,6 +44,17 @@ async def test_t20_label_flips_resting_to_vacant_on_the_safety_net_without_lock_
     assert fake.calls == []                               # door already locked + armed
 
 
+async def test_t20_label_reads_resting_while_in_a_zone_inside_the_home_zone(hass, fake: FakeTTLock, policy, clock, hooks) -> None:
+    await policy()
+    hass.states.async_set(JOACHIM, "Stabburet", {"in_zones": ["zone.stabburet", "zone.home"]})
+    await hass.async_block_till_done()
+    fake.unlocked_by("unlock by fingerprint", "Joachim")
+    await hass.async_block_till_done()
+    await clock(46 * MIN)
+    assert hass.states.get(STATE).state == "resting"
+    assert len(hooks["on_resting"]) == 1 and hooks["on_vacant"] == []
+
+
 async def test_t27_explicit_lock_settles_the_label_at_once(hass, fake: FakeTTLock, policy, clock, hooks) -> None:
     await policy()
     await clock(46 * MIN)                                 # bedroom quiet for more than M, so the class is vacant

@@ -36,8 +36,8 @@ MUTATIONS: list[tuple[str, str, str]] = [
      "| first | default('')) == event_marker }}",
      "| first | default('')) == event_marker or true }}"),
     ("swap the resting/vacant classification",
-     "classification: \"{{ 'resting' if (persons_home or resting_recent) else 'vacant' }}\"",
-     "classification: \"{{ 'vacant' if (persons_home or resting_recent) else 'resting' }}\""),
+     "classification: \"{{ 'resting' if (persons_present or resting_recent) else 'vacant' }}\"",
+     "classification: \"{{ 'vacant' if (persons_present or resting_recent) else 'resting' }}\""),
     ("count resting sensors as activity",
      "activity_on: \"{{ expand(motion_sensors) |",
      "activity_on: \"{{ expand(motion_sensors + resting_sensors) |"),
@@ -53,6 +53,12 @@ MUTATIONS: list[tuple[str, str, str]] = [
     ("drop H := now in R2",
      "is_explicit_lock and event_is_fresh and h_ts > now_ts }}",
      "is_explicit_lock and event_is_fresh and false }}"),
+    ("count only the home state as present",
+     "{%- if s.state == 'home' or 'zone.home' in (s.attributes.in_zones | default([])) -%}",
+     "{%- if s.state == 'home' -%}"),
+    ("push the timer on moves outside the site too",
+     "{{ on_site.from or on_site.to }}",
+     "{{ trigger.id == 'activity_presence' }}"),
 ]
 
 

@@ -8,6 +8,9 @@ from .conftest import BEDROOM, JOACHIM, KITCHEN, LIVING, helper_ts
 from .fakes import FakeTTLock
 
 MIN = 60
+SITE = {"in_zones": ["zone.johanne", "zone.home"]}        # a building zone nested inside the home zone
+SITE2 = {"in_zones": ["zone.stabburet", "zone.home"]}
+AWAY = {"in_zones": ["zone.work"]}                        # a zone elsewhere
 
 
 async def test_t5_motion_pushes_by_m(hass: HomeAssistant, fake: FakeTTLock, policy) -> None:
@@ -73,15 +76,51 @@ async def test_t22_resting_sensor_never_pushes(hass: HomeAssistant, fake: FakeTT
     assert helper_ts(hass) == before
 
 
-async def test_t5_zone_transition_is_a_presence_change(hass: HomeAssistant, fake: FakeTTLock, policy, clock) -> None:
+async def test_t5_move_from_home_into_a_nested_zone_pushes_by_p(hass: HomeAssistant, fake: FakeTTLock, policy, clock) -> None:
     await policy()
-    hass.states.async_set(JOACHIM, "home")
+    hass.states.async_set(JOACHIM, "home", {"in_zones": ["zone.home"]})
     await hass.async_block_till_done()
     await clock(30 * MIN)
     t1 = dt_util.utcnow().timestamp()
-    hass.states.async_set(JOACHIM, "Hovedhytta")           # a zone name is a known state
+    hass.states.async_set(JOACHIM, "Hovedhytta", {"in_zones": ["zone.hovedhytta", "zone.home"]})
     await hass.async_block_till_done()
     assert helper_ts(hass) == pytest.approx(t1 + 20 * MIN, abs=1)
+
+
+async def test_t5_move_between_two_nested_zones_pushes_by_p(hass: HomeAssistant, fake: FakeTTLock, policy, clock) -> None:
+    await policy()
+    hass.states.async_set(JOACHIM, "Johanne", SITE)
+    await hass.async_block_till_done()
+    await clock(30 * MIN)
+    t1 = dt_util.utcnow().timestamp()
+    hass.states.async_set(JOACHIM, "Stabburet", SITE2)     # both states inside the home zone
+    await hass.async_block_till_done()
+    assert helper_ts(hass) == pytest.approx(t1 + 20 * MIN, abs=1)
+
+
+async def test_t5_arrival_into_and_departure_from_a_nested_zone_push_by_p(hass: HomeAssistant, fake: FakeTTLock, policy, clock) -> None:
+    await policy()
+    t0 = dt_util.utcnow().timestamp()
+    hass.states.async_set(JOACHIM, "Johanne", SITE)        # not_home -> inside the home zone
+    await hass.async_block_till_done()
+    assert helper_ts(hass) == pytest.approx(t0 + 20 * MIN, abs=1)
+    await clock(30 * MIN)
+    t1 = dt_util.utcnow().timestamp()
+    hass.states.async_set(JOACHIM, "not_home", {"in_zones": []})
+    await hass.async_block_till_done()
+    assert helper_ts(hass) == pytest.approx(t1 + 20 * MIN, abs=1)
+
+
+async def test_t5_moves_entirely_outside_the_site_never_push(hass: HomeAssistant, fake: FakeTTLock, policy) -> None:
+    await policy()
+    before = helper_ts(hass)
+    hass.states.async_set(JOACHIM, "Work", AWAY)           # not_home -> a zone elsewhere
+    await hass.async_block_till_done()
+    hass.states.async_set(JOACHIM, "Shop", {"in_zones": ["zone.shop"]})
+    await hass.async_block_till_done()
+    hass.states.async_set(JOACHIM, "not_home", {"in_zones": []})
+    await hass.async_block_till_done()
+    assert helper_ts(hass) == before
 
 
 async def test_t16_boot_and_outage_transitions_never_push(hass: HomeAssistant, fake: FakeTTLock, policy) -> None:
