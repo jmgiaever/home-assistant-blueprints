@@ -29,7 +29,7 @@ same behaviour can be applied to other locks, cabins and people by filling in in
 | Motion | Two Shelly Wave Motion (Z-Wave): `binary_sensor.kitchen_motion_detection_location_provided`, `binary_sensor.living_room_motion_detection_location_provided`; a Heiman sensor in the bedroom (`binary_sensor.bedroom_motion_sensor_motion_detection`) |
 | Presence | UniFi Wi-Fi trackers only, no companion app. `person.lav918` (Joachim: ThinkPad, four Pixel-10 entries, three Pixel-Watch entries), `person.lukas_alexander` (Pixel 8). On 2026-08-21 neither phone was on the cabin Wi-Fi during 8 h of fingerprint/passcode activity, so presence is a helper signal, not the deciding one |
 | Usage (Aug 11–21) | 18 unlocks: 11 passcode, 4 fingerprint, 3 gateway/app; operators Joachim, Joachim L, Lukas, Magnus, joachim@giaever.no. Every unlock was followed by `Auto Lock` within a minute |
-| Site | Timezone Europe/Oslo. Zones exist for the buildings (Hovedhytta, Joachim, Kristina, Ola Magnus, Johanne, Garasjen, Stabburet) but nothing GPS-based feeds them |
+| Site | Timezone Europe/Oslo. Zones exist for the buildings (Hovedhytta, Joachim, Kristina, Ola Magnus, Johanne, Garasjen, Stabburet; radius 4–12 m, 7–30 m apart) and all lie inside the 54 m home zone. Since 2026-09-16 the companion app on Joachim's phone feeds them by GPS: HA reports the smallest matching zone, so the person reads `Johanne`/`Stabburet` rather than `home` while on the site, and GPS noise (median accuracy 13 m, p90 58 m) flips it between buildings: 184 zone changes in two days, up to 45 in one hour (acceptance 2026-09-17). The person's `in_zones` attribute lists every zone containing the position, including `zone.home` |
 
 ## 3. Scope and non-goals
 
@@ -86,7 +86,7 @@ Motion sensors come in two groups: **activity sensors** (living areas) push the 
 
 | # | Name | Triggers | Conditions | Actions |
 |---|---|---|---|---|
-| **R0** | Track activity | any **activity** motion sensor changes between `on` and `off` (resting sensors excluded); any tracked person changes between two known states | both old and new state are known (not `unavailable`/`unknown`/none), so boot-time and outage transitions never push *H* | motion: `H := max(H, now + M)`; person: `H := max(H, now + P)`; `label(occupied)` |
+| **R0** | Track activity | any **activity** motion sensor changes between `on` and `off` (resting sensors excluded); any tracked person changes between two known states | both old and new state are known (not `unavailable`/`unknown`/none), so boot-time and outage transitions never push *H*; for persons, the old **or** the new state must be *present* (D27): arrivals, departures and moves between the site's zones push, changes entirely outside the site never do | motion: `H := max(H, now + M)`; person: `H := max(H, now + P)`; `label(occupied)` |
 | **R1** | Occupy | last-trigger changes to an `UNLOCK` value; **or** the lock entity changes to `unlocked` from `locked`/`locking`/`unlocking` | trusted-operator list empty, or last-operator value is in it (trimmed, case-insensitive); a non-empty list without an operator sensor denies everything (README says so) (the trusted-operator condition gates the whole rule, including the timer push and the label) | `H := max(H, now + M)`; if the auto-lock switch is `on` → `configure_autolock(enabled: false)`; `label(occupied)` |
 | **R2** | Vacate now | last-trigger changes to an `EXPLICIT_LOCK` value | — | `vacate()`; `H := now` (activity is over); `refresh_label()` |
 | **R3** | Settle + refresh label | time reaches *H*; passage sensor turns `off`; lock entity returns from `unavailable`; safety net every 5 min; HA start (+2 min grace) | — | **Settle** when `now ≥ H`, no activity sensor is `on` and the passage sensor is not `on`: if the lock entity is `unavailable` → persistent notification "settle pending, lock unreachable" (re-evaluated when the lock returns and by the safety net), else `apply(classify())` (idempotent: no call when nothing needs strengthening). Then always `refresh_label()` |
@@ -111,7 +111,8 @@ with a monotonic `max`. Because both constraints only ever move forward in time,
 - The settle happens at *H* only if the live states agree (R3 conditions). If an activity sensor is still `on` at *H*,
   its next `off` pushes *H* again and the time trigger re-arms. Presence does **not** block the settle; it selects
   which policy is applied (Resting or Vacant), and the Resting policy may be "leave the door alone".
-- Classification at settle, refreshed every 5 min: `vacant` when no tracked person is `home` and every resting sensor
+- Classification at settle, refreshed every 5 min: `vacant` when no tracked person is *present* (D27: state `home`, or
+  `zone.home` in its `in_zones` attribute, i.e. any zone nested inside the home zone) and every resting sensor
   is `off` and unchanged for at least M (a sleeping person triggers a bedroom PIR rarely, so the last change, not only
   the current state, counts); `resting` otherwise. Each refresh re-applies the policy of the current class; because
   policies only strengthen, a flip `resting` → `vacant` (phones gone, bedroom quiet) locks and arms within 5 min, and
@@ -225,7 +226,7 @@ Grouped with blueprint input sections (HA ≥ 2024.6).
 | `resting_armed_seconds` (S_r) | number 1–60 s | 30 | countdown used when Resting arms; applied only when the switch is `off`, never re-configures an armed lock |
 | **Occupancy sources** — `motion_sensors` | entity, `binary_sensor`, device_class motion/occupancy, multiple | [] | activity sensors (living areas): push *H* |
 | `resting_sensors` | entity, `binary_sensor`, device_class motion/occupancy, multiple | [] | bedrooms: never push *H*; only used by `classify()` (label) |
-| `presence_entities` | entity, domains `person`, `device_tracker`, multiple | [] | `home` = present; pushes *H* by P and used by `classify()`; never keeps the door unlocked |
+| `presence_entities` | entity, domains `person`, `device_tracker`, multiple | [] | present = `home` or any zone inside the home zone (`zone.home` in `in_zones`); a change that starts or ends present pushes *H* by P; used by `classify()`; never keeps the door unlocked (D27) |
 | `trusted_operators` | text, multiple | [] | empty = anyone |
 | **Night** — `night_enabled` | boolean | false | |
 | `night_time` | time | 23:00 | |
@@ -362,6 +363,7 @@ Tip for the household, outside this design: enrolling Lukas's fingerprint makes 
 | D23 | Policies only strengthen (bolt, arm); only R1 disarms and only R5 unlocks; `rest()` never re-configures an armed lock | Makes every policy application idempotent and memory-free, so the 5-minute refresh is safe, an explicit lock can never be weakened by presence, and a wrong classification fails towards locked |
 | D24 | Resting policy is per instance: `resting_lock_bolt`, `resting_arm_auto_lock`, `resting_armed_seconds`; Vacant is fixed | User asked for Resting to be adjustable (locking action, auto-lock mode, countdown) so other cabins can keep the door free while the household is around; Vacant has one sensible meaning |
 | D25 | An explicit lock sets `H := now` | "We are leaving" ends the activity window, so the label settles immediately instead of flapping until the timer expires |
+| D27 | **Present** = the tracked entity's state is `home` **or** its `in_zones` attribute contains `zone.home` (every zone nested inside the home zone counts; other zones, `not_home`, `unavailable`, `unknown` do not). R0 pushes *H* by P on a person change whose old **or** new state is present (arrival, departure, move between the site's zones); changes entirely outside the site never push. The parent zone is the home zone, not an input | Acceptance 2026-09-17: GPS trackers report the smallest matching zone, so on a site with building zones inside the home zone the household reads `Johanne`/`Stabburet` and counted as away, and each of the frequent zone changes pushed the timer. The user walks between the cabins a lot and wants those moves to keep the door free (each move: no settle for P more minutes, not cumulative), accepting that GPS noise can delay a bedtime lock by up to P after the last hop; a hop can never unlock. Arrivals and departures keep pushing as before (user's choice). Moves elsewhere are irrelevant to the cabin. `in_zones` is provided by HA core for persons and GPS trackers, so no new input is needed; a `site_zone` input can be added if another site needs a different parent |
 
 ## 10. To verify on the device during acceptance
 
@@ -385,8 +387,7 @@ Tip for the household, outside this design: enrolling Lukas's fingerprint makes 
 - Managing guest hours (passage schedules) or passcodes from HA is a separate blueprint if ever wanted.
 - Upstream: a small PR to `hass-ttlock` setting `force_update` on the last-trigger and last-operator sensors would make
   repeated identical events visible; the blueprint must not depend on it (D11), so it is a separate follow-up.
-- **Open from acceptance (2026-09-17, see `docs/superpowers/acceptance/2026-09-17-cabin-auto-lock-hytta.md`):** persons
-  tracked by GPS read the site's building zones (`Johanne`, `Stabburet`, `Garasjen`) rather than `home`, so the blueprint
-  counts them as away, and every move between buildings is a presence change that pushes the timer by P. Candidate
-  change: a `site_zones` input (zones that count as present besides `home`), and a decision on whether moves between
-  site zones push the timer (activity) or only present↔away transitions do. Not decided yet.
+- The parent zone for presence is fixed to the home zone (D27). A site whose buildings are not nested inside the home
+  zone would need a `site_zone` input; not built until someone needs it.
+- GPS noise between tiny nested zones can delay a bedtime lock by up to P after the last hop (D27). The night rule (R4)
+  caps that if wanted; Hytta keeps it off.

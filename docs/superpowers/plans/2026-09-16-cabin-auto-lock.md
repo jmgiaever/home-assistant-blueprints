@@ -2650,6 +2650,186 @@ git commit -m "docs: Hytta acceptance results for the cabin auto-lock blueprint"
 
 ---
 
+### Task 14: Presence = inside the home zone (D27)
+
+**Why:** acceptance 2026-09-17 (`docs/superpowers/acceptance/2026-09-17-cabin-auto-lock-hytta.md`, "Presence finding" 1 and 2).
+Persons tracked by GPS read the building zones nested inside the home zone, so `state == 'home'` misses them, and every
+zone hop pushed the timer. Spec D27, §4.3 R0, §4.4 and §5 `presence_entities` are the requirements.
+
+**Files:**
+- Modify: `automation/cabin_auto_lock.yaml` (variables `persons_home` → `persons_present`, new `presence_push`, R0 push, label, `presence_entities` description)
+- Modify: `tests/test_02_timer.py`, `tests/test_05_settle.py`, `tests/test_08_label.py`
+- Modify: `scripts/mutation_check.py` (rename anchor + two new mutations)
+- Modify: `README.md` (presence row)
+
+**Interfaces:**
+- Consumes: `trigger.from_state` / `trigger.to_state` of the `activity_presence` state trigger; the `in_zones` attribute HA core puts on `person` and GPS `device_tracker` states (a list of zone entity ids containing the position, `zone.home` included when inside the home zone; `[]` when `not_home`; absent on router trackers).
+- Produces: variables `persons_present` (bool) and `presence_push` (bool), used by `push_delay_minutes`, `classification` and the label.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `tests/test_02_timer.py`, replace `test_t5_zone_transition_is_a_presence_change` with the four tests below (keep the imports; add `SITE`, `SITE2`, `AWAY` next to `MIN`):
+
+```python
+SITE = {"in_zones": ["zone.johanne", "zone.home"]}        # a building zone nested inside the home zone
+SITE2 = {"in_zones": ["zone.stabburet", "zone.home"]}
+AWAY = {"in_zones": ["zone.work"]}                        # a zone elsewhere
+
+
+async def test_t5_move_from_home_into_a_nested_zone_pushes_by_p(hass: HomeAssistant, fake: FakeTTLock, policy, clock) -> None:
+    await policy()
+    hass.states.async_set(JOACHIM, "home", {"in_zones": ["zone.home"]})
+    await hass.async_block_till_done()
+    await clock(30 * MIN)
+    t1 = dt_util.utcnow().timestamp()
+    hass.states.async_set(JOACHIM, "Hovedhytta", {"in_zones": ["zone.hovedhytta", "zone.home"]})
+    await hass.async_block_till_done()
+    assert helper_ts(hass) == pytest.approx(t1 + 20 * MIN, abs=1)
+
+
+async def test_t5_move_between_two_nested_zones_pushes_by_p(hass: HomeAssistant, fake: FakeTTLock, policy, clock) -> None:
+    await policy()
+    hass.states.async_set(JOACHIM, "Johanne", SITE)
+    await hass.async_block_till_done()
+    await clock(30 * MIN)
+    t1 = dt_util.utcnow().timestamp()
+    hass.states.async_set(JOACHIM, "Stabburet", SITE2)     # both states inside the home zone
+    await hass.async_block_till_done()
+    assert helper_ts(hass) == pytest.approx(t1 + 20 * MIN, abs=1)
+
+
+async def test_t5_arrival_into_and_departure_from_a_nested_zone_push_by_p(hass: HomeAssistant, fake: FakeTTLock, policy, clock) -> None:
+    await policy()
+    t0 = dt_util.utcnow().timestamp()
+    hass.states.async_set(JOACHIM, "Johanne", SITE)        # not_home -> inside the home zone
+    await hass.async_block_till_done()
+    assert helper_ts(hass) == pytest.approx(t0 + 20 * MIN, abs=1)
+    await clock(30 * MIN)
+    t1 = dt_util.utcnow().timestamp()
+    hass.states.async_set(JOACHIM, "not_home", {"in_zones": []})
+    await hass.async_block_till_done()
+    assert helper_ts(hass) == pytest.approx(t1 + 20 * MIN, abs=1)
+
+
+async def test_t5_moves_entirely_outside_the_site_never_push(hass: HomeAssistant, fake: FakeTTLock, policy) -> None:
+    await policy()
+    before = helper_ts(hass)
+    hass.states.async_set(JOACHIM, "Work", AWAY)           # not_home -> a zone elsewhere
+    await hass.async_block_till_done()
+    hass.states.async_set(JOACHIM, "Shop", {"in_zones": ["zone.shop"]})
+    await hass.async_block_till_done()
+    hass.states.async_set(JOACHIM, "not_home", {"in_zones": []})
+    await hass.async_block_till_done()
+    assert helper_ts(hass) == before
+```
+
+In `tests/test_05_settle.py`, after `test_t24_resting_policy_off_off_leaves_door_free_then_vacates_when_phones_leave`, add:
+
+```python
+async def test_t24_person_in_a_zone_inside_the_home_zone_is_present(hass, fake: FakeTTLock, policy, clock) -> None:
+    await policy(resting_lock_bolt=False, resting_arm_auto_lock=False)
+    hass.states.async_set(JOACHIM, "Johanne", {"in_zones": ["zone.johanne", "zone.home"]})
+    await hass.async_block_till_done()
+    await occupied_with_motion(hass, fake)
+    await clock(50 * MIN)
+    assert fake.calls == []                               # resting: Joachim is on the site
+    assert hass.states.get(LOCK).state == "unlocked"
+
+
+async def test_t24_person_in_a_zone_elsewhere_is_not_present(hass, fake: FakeTTLock, policy, clock) -> None:
+    await policy(resting_lock_bolt=False, resting_arm_auto_lock=False)
+    hass.states.async_set(JOACHIM, "Work", {"in_zones": ["zone.work"]})
+    await hass.async_block_till_done()
+    await occupied_with_motion(hass, fake)
+    await clock(50 * MIN)
+    assert fake.calls == VACATE                           # vacant: a zone outside the home zone is away
+```
+
+In `tests/test_08_label.py`, after `test_t20_label_flips_resting_to_vacant_on_the_safety_net_without_lock_calls`, add:
+
+```python
+async def test_t20_label_reads_resting_while_in_a_zone_inside_the_home_zone(hass, fake: FakeTTLock, policy, clock, hooks) -> None:
+    await policy()
+    hass.states.async_set(JOACHIM, "Stabburet", {"in_zones": ["zone.stabburet", "zone.home"]})
+    await hass.async_block_till_done()
+    fake.unlocked_by("unlock by fingerprint", "Joachim")
+    await hass.async_block_till_done()
+    await clock(46 * MIN)
+    assert hass.states.get(STATE).state == "resting"
+    assert len(hooks["on_resting"]) == 1 and hooks["on_vacant"] == []
+```
+
+- [ ] **Step 2: Run the new tests and see them fail**
+
+Run: `uv run pytest tests/test_02_timer.py tests/test_05_settle.py tests/test_08_label.py -q`
+Expected: `test_t5_move_between_two_nested_zones_pushes_by_p` passes by accident (any known change pushes today) and the
+others FAIL: `..._moves_entirely_outside_the_site_never_push` (H moved), `..._is_present` (VACATE was called),
+`..._reads_resting_...` (label `vacant`). Paste the failing assertion lines into the report.
+
+- [ ] **Step 3: Implement**
+
+In `automation/cabin_auto_lock.yaml`:
+
+1. Replace the `persons_home` variable with:
+
+```yaml
+  persons_present: >-
+    {%- set ns = namespace(present=false) -%}
+    {%- for s in expand(presence_entities) -%}
+      {%- if s.state == 'home' or 'zone.home' in (s.attributes.in_zones | default([])) -%}
+        {%- set ns.present = true -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {{ ns.present }}
+  presence_push: >-
+    {%- set on_site = namespace(from=false, to=false) -%}
+    {%- if trigger.id == 'activity_presence' and trigger.from_state is not none and trigger.to_state is not none -%}
+      {%- set on_site.from = trigger.from_state.state == 'home' or 'zone.home' in (trigger.from_state.attributes.in_zones | default([])) -%}
+      {%- set on_site.to = trigger.to_state.state == 'home' or 'zone.home' in (trigger.to_state.attributes.in_zones | default([])) -%}
+    {%- endif -%}
+    {{ on_site.from or on_site.to }}
+```
+
+2. `classification` and the label template: `persons_home` → `persons_present` (two places).
+3. `push_delay_minutes`: `{%- elif trigger.id == 'activity_presence' -%}{{ presence_delay }}` → `{%- elif presence_push -%}{{ presence_delay }}`.
+4. `presence_entities` input description: `Persons or device trackers. Present = "home" or any zone inside the home zone (HA lists it in the in_zones attribute). A presence change that starts or ends on the site postpones settling by P; presence marks the cabin as resting rather than vacant. Never keeps the door unlocked.`
+
+- [ ] **Step 4: Run the whole suite and see it pass**
+
+Run: `uv run pytest -q` (expected 154 passed) and `uv run ruff check .`
+
+- [ ] **Step 5: Mutation check**
+
+In `scripts/mutation_check.py`: update the "swap the resting/vacant classification" anchor/replacement to `persons_present`, and append:
+
+```python
+    ("count only the home state as present",
+     "{%- if s.state == 'home' or 'zone.home' in (s.attributes.in_zones | default([])) -%}",
+     "{%- if s.state == 'home' -%}"),
+    ("push the timer on moves outside the site too",
+     "{{ on_site.from or on_site.to }}",
+     "{{ trigger.id == 'activity_presence' }}"),
+```
+
+Run: `uv run python scripts/mutation_check.py` → expected `all 14 mutations killed`.
+
+- [ ] **Step 6: README**
+
+Presence row: `persons or trackers; present = home or any zone inside the home zone; a change that starts or ends on the site postpones settling by P; presence marks resting; never keeps the door unlocked`.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add automation/cabin_auto_lock.yaml tests scripts/mutation_check.py README.md
+git commit -m "feat(cabin-auto-lock): presence = inside the home zone; off-site moves never push (D27)"
+```
+
+- [ ] **Step 8 (controller): redeploy and verify**
+
+`deploy-hytta.sh prod --restart` (uses `docker restart -t 60`). Acceptance rows A10 (label `resting`, not `vacant`, at the first
+settle/safety-net tick with Joachim in a building zone), A11 (a zone-to-zone hop pushes H by P with no lock call), A12 (a
+`not_home` → elsewhere change pushes nothing; pending until it happens).
+
 ## Appendix A — the complete blueprint after Task 9
 
 This is the reference the tasks converge on; if a task's snippet and this appendix disagree, the appendix wins.
