@@ -24,3 +24,15 @@ All timestamps below are UTC from the recorder (CEST = UTC + 2). Persons are Uni
 ## Summary
 
 All door rules verified on the live lock: occupy 1 s, settles at H to the second, stale-countdown undo works (cloud lag up to ~25 s), explicit lock and restart behave as designed. Ops finding: restart HA with `docker restart -t 60`. Two presence findings are open for a design decision (building zones ≠ `home`; zone-to-zone moves push the timer by P).
+
+## Redeploy 2026-09-18 (Task 14, D27: presence = inside the home zone)
+
+Blueprint sha256 f49c530f3813e7aca91cd952eb2d00b1030a4789764fb241341395ff3e254fa4 (branch feat/cabin-auto-lock @ 3ec18e6; 154 tests, 15/15 mutations killed, ruff clean, task review approved with minor notes applied).
+Before the redeploy the TTLock integration had been failing its poll since 16:17:42 CEST ("Failed to re-verify lock state"; gateway on the LAN, cloud reachable), leaving the lock, switch and last-trigger sensor `unavailable` for six hours with the door last known `unlocked`/auto-lock `off` after a 12:26 passcode unlock; it recovered at 22:17:43 after the user power-cycled the gateway, with the same states.
+
+| # | Check | Expected | Measured | Result |
+|---|---|---|---|---|
+| A9b | Redeploy with `deploy-hytta.sh prod --restart` (`docker restart -t 60`) | blueprint hash matches, values M = 45 / P = 20, automation on, entities available, helper restored intact, no lock calls at boot | deploy 22:29:33–22:30:08; new boot 22:30:18; device blueprint sha256 f49c530f…; `motion_delay: 45`, `presence_delay: 20`; backup `automations.yaml.bak-20260918-202934`; automation on 22:30:20; helper restored 23:03:24 (its value since 22:18:23, 0 s stale); lock `unlocked`, switch `off`, last trigger `unlock by passcode` (all unchanged from before the restart); persons `home` (`in_zones` = [zone.home]) / `not_home`; label `occupied`; no ttlock/automation/template errors since boot | PASS |
+| A10 | Label `resting` (not `vacant`) at a settle while Joachim's person reads a building zone | at the first settle/safety-net tick with the person in a nested zone and the living areas quiet: label `resting`, no lock call beyond the resting policy | pending: needs a settle while the phone reads a nested zone (before D27 the same situation gave `vacant`, A8) | PENDING |
+| A11 | A move between two zones inside the home zone pushes H by P = 20 min | helper := max(H, hop + 20 min) on the hop; no lock call | pending: next zone-to-zone hop in the recorder | PENDING |
+| A12 | A change entirely outside the site (e.g. `not_home` → a zone elsewhere) pushes nothing | helper unchanged | pending: needs an off-site zone change in the recorder | PENDING |
