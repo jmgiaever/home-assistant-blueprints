@@ -345,12 +345,12 @@ variables:
     {%- endfor -%}
     {{ ns.present }}
   presence_push: >-
-    {%- set on_site = namespace(from=false, to=false) -%}
+    {%- set on_site = namespace(before=false, after=false) -%}
     {%- if trigger.id == 'activity_presence' and trigger.from_state is not none and trigger.to_state is not none -%}
-      {%- set on_site.from = trigger.from_state.state == 'home' or 'zone.home' in (trigger.from_state.attributes.in_zones | default([])) -%}
-      {%- set on_site.to = trigger.to_state.state == 'home' or 'zone.home' in (trigger.to_state.attributes.in_zones | default([])) -%}
+      {%- set on_site.before = trigger.from_state.state == 'home' or 'zone.home' in (trigger.from_state.attributes.in_zones | default([])) -%}
+      {%- set on_site.after = trigger.to_state.state == 'home' or 'zone.home' in (trigger.to_state.attributes.in_zones | default([])) -%}
     {%- endif -%}
-    {{ on_site.from or on_site.to }}
+    {{ on_site.before or on_site.after }}
   resting_recent: >-
     {%- set ns = namespace(recent=false) -%}
     {%- for s in expand(resting_sensors) -%}

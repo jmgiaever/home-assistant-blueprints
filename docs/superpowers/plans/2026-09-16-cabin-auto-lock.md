@@ -2663,7 +2663,7 @@ zone hop pushed the timer. Spec D27, §4.3 R0, §4.4 and §5 `presence_entities`
 - Modify: `README.md` (presence row)
 
 **Interfaces:**
-- Consumes: `trigger.from_state` / `trigger.to_state` of the `activity_presence` state trigger; the `in_zones` attribute HA core puts on `person` and GPS `device_tracker` states (a list of zone entity ids containing the position, `zone.home` included when inside the home zone; `[]` when `not_home`; absent on router trackers).
+- Consumes: `trigger.from_state` / `trigger.to_state` of the `activity_presence` state trigger; the `in_zones` attribute HA core puts on `person` and GPS `device_tracker` states (a list of zone entity ids containing the position, `zone.home` included when inside the home zone; `[]` when `not_home`; router-based trackers emit it too in HA 2026.8: `[]` when disconnected, the associated zone plus its enclosing zones when connected, so `| default([])` only matters for older cores).
 - Produces: variables `persons_present` (bool) and `presence_push` (bool), used by `push_delay_minutes`, `classification` and the label.
 
 - [ ] **Step 1: Write the failing tests**

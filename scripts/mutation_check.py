@@ -57,8 +57,11 @@ MUTATIONS: list[tuple[str, str, str]] = [
      "{%- if s.state == 'home' or 'zone.home' in (s.attributes.in_zones | default([])) -%}",
      "{%- if s.state == 'home' -%}"),
     ("push the timer on moves outside the site too",
-     "{{ on_site.from or on_site.to }}",
+     "{{ on_site.before or on_site.after }}",
      "{{ trigger.id == 'activity_presence' }}"),
+    ("require the home state for a presence push (ignore nested zones)",
+     "'zone.home' in (trigger.",
+     "'zone.nowhere' in (trigger."),
 ]
 
 
